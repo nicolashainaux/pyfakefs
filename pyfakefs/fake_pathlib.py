@@ -29,22 +29,14 @@ Note: as the implementation is based on FakeFilesystem, all faked classes
 get the properties of the underlying fake filesystem.
 """
 
-import os
-
-try:
-    from urllib.parse import quote_from_bytes as urlquote_from_bytes
-except ImportError:
-    from urllib import quote as urlquote_from_bytes
-
-import sys
-
-import functools
-
 import errno
+import functools
+import os
+import sys
+from urllib.parse import quote_from_bytes as urlquote_from_bytes
 
 from pyfakefs import fake_scandir
 from pyfakefs.extra_packages import use_scandir, pathlib, pathlib2
-from pyfakefs.helpers import text_type
 from pyfakefs.fake_filesystem import FakeFileOpen, FakeFilesystem
 
 
@@ -504,7 +496,7 @@ class FakePath(pathlib.Path):
         """
         if self._closed:
             self._raise_closed()
-        return FakeFileOpen(self.filesystem, use_io=True)(
+        return FakeFileOpen(self.filesystem)(
             self._path(), mode, buffering, encoding, errors, newline)
 
     if sys.version_info >= (3, 5) or pathlib2:
@@ -523,9 +515,9 @@ class FakePath(pathlib.Path):
             Open the fake file in text mode, read it, and close the file.
             """
             with FakeFileOpen(
-                    self.filesystem, use_io=True)(self._path(), mode='r',
-                                                  encoding=encoding,
-                                                  errors=errors) as f:
+                    self.filesystem)(self._path(), mode='r',
+                                     encoding=encoding,
+                                     errors=errors) as f:
                 return f.read()
 
         def write_bytes(self, data):
@@ -551,19 +543,18 @@ class FakePath(pathlib.Path):
                     default locale encoding is used
                 errors: ignored
             Raises:
-                TypeError: if data is not of type 'str' (Python 3) or 'unicode'
-                    (Python 2)
+                TypeError: if data is not of type 'str'
                 IOError: if the target object is a directory, the path is
                     invalid or permission is denied.
             """
-            if not isinstance(data, text_type):
+            if not isinstance(data, str):
                 raise TypeError('data must be str, not %s' %
                                 data.__class__.__name__)
             with FakeFileOpen(
-                    self.filesystem, use_io=True)(self._path(),
-                                                  mode='w',
-                                                  encoding=encoding,
-                                                  errors=errors) as f:
+                    self.filesystem)(self._path(),
+                                     mode='w',
+                                     encoding=encoding,
+                                     errors=errors) as f:
                 return f.write(data)
 
         @classmethod
@@ -611,9 +602,7 @@ class FakePath(pathlib.Path):
                 happens, otherwise FileExistError is raised
 
         Raises:
-            OSError: (Python 2 only) if the file exists and exits_ok is False.
-            FileExistsError: (Python 3 only) if the file exists and exits_ok is
-                False.
+            FileExistsError: if the file exists and exist_ok is False.
         """
         if self._closed:
             self._raise_closed()
@@ -628,7 +617,7 @@ class FakePath(pathlib.Path):
             self.chmod(mode)
 
 
-class FakePathlibModule(object):
+class FakePathlibModule:
     """Uses FakeFilesystem to provide a fake pathlib module replacement.
     Can be used to replace both the standard `pathlib` module and the
     `pathlib2` package available on PyPi.
@@ -677,7 +666,7 @@ class FakePathlibModule(object):
         return getattr(self._pathlib_module, name)
 
 
-class FakePathlibPathModule(object):
+class FakePathlibPathModule:
     """Patches `pathlib.Path` by passing all calls to FakePathlibModule."""
     fake_pathlib = None
 

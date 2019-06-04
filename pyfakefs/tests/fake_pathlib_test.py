@@ -30,7 +30,6 @@ from pyfakefs.extra_packages import pathlib, pathlib2
 
 if pathlib is not None:
     from pyfakefs import fake_pathlib, fake_filesystem
-    from pyfakefs.helpers import text_type
     from pyfakefs.tests.test_utils import RealFsTestCase, TestCase
 
     is_windows = sys.platform == 'win32'
@@ -436,11 +435,6 @@ if pathlib is not None:
             skip_if_pathlib_36_not_available()
             path = self.path(
                 self.make_path('/path', 'to', 'file', 'this can not exist'))
-            # kludge to avoid https://github.com/mcmtroffaes/pathlib2/issues/45
-            if not (pathlib2 and
-                    TestCase.is_windows and
-                    sys.version_info < (3, 2)):
-                self.assertEqual(path, path.resolve())
             self.assert_raises_os_error(errno.ENOENT, path.resolve,
                                         strict=True)
 
@@ -513,8 +507,6 @@ if pathlib is not None:
             file_path = self.path(self.make_path('text_file'))
             self.assertEqual(file_path.read_text(), 'foo')
 
-        @unittest.skipIf(sys.version_info < (3, 0),
-                         'Python 3 specific string handling')
         def test_read_text_with_encoding(self):
             skip_if_pathlib_35_not_available()
             self.create_file(self.make_path('text_file'),
@@ -527,12 +519,10 @@ if pathlib is not None:
             skip_if_pathlib_35_not_available()
             path_name = self.make_path('text_file')
             file_path = self.path(path_name)
-            file_path.write_text(text_type('foo'))
+            file_path.write_text('foo')
             self.assertTrue(self.os.path.exists(path_name))
             self.check_contents(path_name, 'foo')
 
-        @unittest.skipIf(sys.version_info < (3, 0),
-                         'Python 3 specific string handling')
         def test_write_text_with_encoding(self):
             skip_if_pathlib_35_not_available()
             path_name = self.make_path('text_file')
@@ -564,8 +554,6 @@ if pathlib is not None:
             self.assertFalse(self.os.path.exists(file_name))
             self.check_contents(new_file_name, 'test')
 
-        @unittest.skipIf(sys.version_info < (3, 3),
-                         'Path.replace() available since Python 3.3')
         def test_replace(self):
             self.create_file(self.make_path('foo', 'bar.txt'), contents='test')
             self.create_file(self.make_path('bar', 'old.txt'),

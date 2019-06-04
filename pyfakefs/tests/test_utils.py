@@ -28,7 +28,7 @@ from pyfakefs import fake_filesystem
 from pyfakefs.helpers import is_byte_string
 
 
-class DummyTime(object):
+class DummyTime:
     """Mock replacement for time.time. Increases returned time on access."""
 
     def __init__(self, curr_time, increment):
@@ -50,7 +50,6 @@ class TestCase(unittest.TestCase):
     is_windows = sys.platform == 'win32'
     is_cygwin = sys.platform == 'cygwin'
     is_macos = sys.platform == 'darwin'
-    is_python2 = sys.version_info[0] < 3
     symlinks_can_be_tested = None
 
     def assert_mode_equal(self, expected, actual):
@@ -73,7 +72,7 @@ class TestCase(unittest.TestCase):
             self.assertEqual(subtype, exc.errno)
 
 
-class RealFsTestMixin(object):
+class RealFsTestMixin:
     """Test mixin to allow tests to run both in the fake filesystem and in the
     real filesystem.
     To run tests in the real filesystem, a new test class can be derived from
@@ -92,7 +91,6 @@ class RealFsTestMixin(object):
         self.filesystem = None
         self.open = open
         self.os = os
-        self.is_python2 = sys.version_info[0] == 2
         self.base_path = None
         if self.use_real_fs():
             self.base_path = tempfile.mkdtemp()
@@ -216,8 +214,7 @@ class RealFsTestMixin(object):
             raise unittest.SkipTest('Only tests fake FS')
 
     def skip_real_fs_failure(self, skip_windows=True, skip_posix=True,
-                             skip_macos=True, skip_linux=True,
-                             skip_python2=True, skip_python3=True):
+                             skip_macos=True, skip_linux=True):
         """If called at test start, no real FS test is executed for the given
         conditions. This is used to mark tests that do not pass correctly under
         certain systems and shall eventually be fixed.
@@ -230,9 +227,8 @@ class RealFsTestMixin(object):
                      TestCase.is_macos and skip_macos or
                      not TestCase.is_windows and
                      not TestCase.is_macos and skip_linux or
-                     not TestCase.is_windows and skip_posix) and
-                    (TestCase.is_python2 and skip_python2 or
-                     not TestCase.is_python2 and skip_python3)):
+                     not TestCase.is_windows and skip_posix)
+                    ):
                 raise unittest.SkipTest(
                     'Skipping because FakeFS does not match real FS')
 
@@ -257,12 +253,6 @@ class RealFsTestMixin(object):
     def skip_if_symlink_not_supported(self):
         """If called at test start, tests are skipped if symlinks are not
         supported."""
-        if (self.use_real_fs() and TestCase.is_windows or
-                not self.use_real_fs() and self.filesystem.is_windows_fs):
-            if sys.version_info < (3, 3):
-                raise unittest.SkipTest(
-                    'Symlinks are not supported under Windows '
-                    'before Python 3.3')
         if not self.symlink_can_be_tested():
             raise unittest.SkipTest(
                 'Symlinks under Windows need admin privileges')
@@ -274,7 +264,7 @@ class RealFsTestMixin(object):
         Always use to compose absolute paths for tests also running in the
         real FS.
         """
-        if not self.is_python2 and isinstance(args[0], bytes):
+        if isinstance(args[0], bytes):
             base_path = self.base_path.encode()
         else:
             base_path = self.base_path
@@ -330,12 +320,6 @@ class RealFsTestMixin(object):
         mode = 'rb' if is_byte_string(contents) else 'r'
         with self.open(file_path, mode) as f:
             self.assertEqual(contents, f.read())
-
-    def not_dir_error(self):
-        error = errno.ENOTDIR
-        if self.is_windows_fs and self.is_python2:
-            error = errno.EINVAL
-        return error
 
     def create_basepath(self):
         """Create the path used as base path in `make_path`."""

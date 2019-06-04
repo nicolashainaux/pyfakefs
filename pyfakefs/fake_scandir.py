@@ -139,10 +139,7 @@ class ScanDirIter:
         return self
 
     def __next__(self):
-        try:
-            entry = self.contents_iter.next()
-        except AttributeError:
-            entry = self.contents_iter.__next__()
+        entry = self.contents_iter.__next__()
         dir_entry = DirEntry(self.filesystem)
         dir_entry.name = entry
         dir_entry.path = self.filesystem.joinpaths(self.path,
@@ -257,7 +254,7 @@ def walk(filesystem, top, topdown=True, onerror=None, followlinks=False):
     return do_walk(top, top_most=True)
 
 
-class FakeScanDirModule(object):
+class FakeScanDirModule:
     """Uses FakeFilesystem to provide a fake `scandir` module replacement.
 
     .. Note:: The ``scandir`` function is a part of the standard ``os`` module

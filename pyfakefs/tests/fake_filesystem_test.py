@@ -121,9 +121,8 @@ class FakeDirectoryUnitTest(TestCase):
     def test_set_contents_to_dir_raises(self):
         # Regression test for #276
         self.filesystem.is_windows_fs = True
-        error_check = (self.assert_raises_io_error if self.is_python2
-                       else self.assert_raises_os_error)
-        error_check(errno.EISDIR, self.fake_dir.set_contents, 'a')
+        self.assert_raises_os_error(
+            errno.EISDIR, self.fake_dir.set_contents, 'a')
         self.filesystem.is_windows_fs = False
         self.assert_raises_io_error(
             errno.EISDIR, self.fake_dir.set_contents, 'a')
@@ -488,14 +487,9 @@ class FakeFilesystemUnitTest(TestCase):
         file_path = dir_path + '/baz'
 
         if not is_root():
-            if sys.version_info[0] < 3:
-                self.assert_raises_io_error(errno.EACCES,
-                                            self.filesystem.create_file,
-                                            file_path)
-            else:
-                self.assert_raises_os_error(errno.EACCES,
-                                            self.filesystem.create_file,
-                                            file_path)
+            self.assert_raises_os_error(errno.EACCES,
+                                        self.filesystem.create_file,
+                                        file_path)
         else:
             self.filesystem.create_file(file_path)
             self.assertTrue(self.filesystem.exists(file_path))
@@ -583,8 +577,6 @@ class FakeFilesystemUnitTest(TestCase):
         self.assert_raises_os_error(
             errno.EEXIST, self.filesystem.create_file, path)
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_create_link(self):
         path = 'foo/bar/baz'
         target_path = 'foo/bar/quux'
@@ -601,8 +593,6 @@ class FakeFilesystemUnitTest(TestCase):
         self.assertTrue(self.filesystem.exists(path))
         self.assertTrue(self.filesystem.exists(target_path))
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_resolve_object(self):
         target_path = 'dir/target'
         target_contents = '0123456789ABCDEF'
@@ -614,8 +604,6 @@ class FakeFilesystemUnitTest(TestCase):
         self.assertEqual('target', obj.name)
         self.assertEqual(target_contents, obj.contents)
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def check_lresolve_object(self):
         target_path = 'dir/target'
         target_contents = '0123456789ABCDEF'
@@ -627,8 +615,6 @@ class FakeFilesystemUnitTest(TestCase):
         self.assertEqual(link_name, obj.name)
         self.assertEqual(target_path, obj.contents)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_lresolve_object_windows(self):
         self.filesystem.is_windows_fs = True
         self.check_lresolve_object()
@@ -703,8 +689,6 @@ class CaseInsensitiveFakeFilesystemTest(TestCase):
         dir2 = self.filesystem.get_object('/foo/bar')
         self.assertEqual(dir1, dir2)
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_resolve_path(self):
         self.filesystem.create_dir('/foo/baz')
         self.filesystem.create_symlink('/Foo/Bar', './baz/bip')
@@ -954,8 +938,6 @@ class FakePathModuleTest(TestCase):
         self.assertEqual('!george!washington!bridge',
                          self.os.path.realpath('bridge'))
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 2),
-                     'No Windows support before 3.2')
     def test_samefile(self):
         file_path1 = '!foo!bar!baz'
         file_path2 = '!foo!bar!boo'
@@ -972,8 +954,6 @@ class FakePathModuleTest(TestCase):
         self.assertTrue(self.path.exists(file_path))
         self.assertFalse(self.path.exists('!some!other!bogus!path'))
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_lexists(self):
         file_path = 'foo!bar!baz'
         self.filesystem.create_dir('foo!bar')
@@ -1094,8 +1074,6 @@ class FakePathModuleTest(TestCase):
         self.assert_raises_os_error(errno.ENOENT, self.path.getmtime,
                                     'it_dont_exist')
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_islink(self):
         self.filesystem.create_dir('foo')
         self.filesystem.create_file('foo!regular_file')
@@ -1112,8 +1090,6 @@ class FakePathModuleTest(TestCase):
 
         self.assertFalse(self.path.islink('it_dont_exist'))
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_is_link_case_sensitive(self):
         # Regression test for #306
         self.filesystem.is_case_sensitive = False
@@ -1139,8 +1115,6 @@ class FakePathModuleTest(TestCase):
         self.assertTrue(self.path.ismount('!mount'))
         self.assertTrue(self.path.ismount('!mount!'))
 
-    @unittest.skipIf(sys.version_info < (2, 7, 8),
-                     'UNC path support since Python 2.7.8')
     def test_ismount_with_unc_paths(self):
         self.filesystem.is_windows_fs = True
         self.assertTrue(self.path.ismount('!!a!'))
@@ -1158,46 +1132,14 @@ class FakePathModuleTest(TestCase):
         self.filesystem.is_windows_fs = True
         self.assertTrue(self.path.ismount('Z:!'))
 
-    @unittest.skipIf(sys.version_info >= (3, 0),
-                     'os.path.walk removed in Python 3')
-    def test_walk(self):
-        self.filesystem.create_file('!foo!bar!baz')
-        self.filesystem.create_file('!foo!bar!xyzzy!plugh')
-        visited_nodes = []
-
-        def RecordVisitedNodes(visited, dirname, fnames):
-            visited.extend(((dirname, fname) for fname in fnames))
-
-        self.path.walk('!foo', RecordVisitedNodes, visited_nodes)
-        expected = [('!foo', 'bar'),
-                    ('!foo!bar', 'baz'),
-                    ('!foo!bar', 'xyzzy'),
-                    ('!foo!bar!xyzzy', 'plugh')]
-        self.assertEqual(expected, sorted(visited_nodes))
-
-    @unittest.skipIf(sys.version_info >= (3, 0) or TestCase.is_windows,
-                     'os.path.walk deprecrated in Python 3, '
-                     'cannot be properly tested in win32')
-    def test_walk_from_nonexistent_top_does_not_throw(self):
-        visited_nodes = []
-
-        def RecordVisitedNodes(visited, dirname, fnames):
-            visited.extend(((dirname, fname) for fname in fnames))
-
-        self.path.walk('!foo', RecordVisitedNodes, visited_nodes)
-        self.assertEqual([], visited_nodes)
-
     def test_getattr_forward_to_real_os_path(self):
         """Forwards any non-faked calls to os.path."""
         self.assertTrue(hasattr(self.path, 'sep'),
                         'Get a faked os.path function')
         private_path_function = None
-        if (2, 7) <= sys.version_info < (3, 6):
+        if sys.version_info < (3, 6):
             if self.is_windows:
-                if sys.version_info >= (3, 0):
-                    private_path_function = '_get_bothseps'
-                else:
-                    private_path_function = '_abspath_split'
+                private_path_function = '_get_bothseps'
             else:
                 private_path_function = '_joinrealpath'
         if private_path_function:
@@ -1435,8 +1377,6 @@ class DriveLetterSupportTest(TestCase):
         self.assertEqual('c:!foo!bar',
                          self.filesystem.normpath('c:!!foo!!bar'))
 
-    @unittest.skipIf(sys.version_info < (2, 7, 8),
-                     'UNC path support since Python 2.7.8')
     def test_collapse_unc_path(self):
         self.assertEqual('!!foo!bar!baz',
                          self.filesystem.normpath('!!foo!bar!!baz!!'))
@@ -1515,8 +1455,6 @@ class DriveLetterSupportTest(TestCase):
         self.assertEqual((b'', b'!foo!bar'),
                          self.filesystem.splitdrive(b'!foo!bar'))
 
-    @unittest.skipIf(sys.version_info < (2, 7, 8),
-                     'UNC path support since Python 2.7.8')
     def test_split_drive_with_unc_path(self):
         self.assertEqual(('!!foo!bar', '!baz'),
                          self.filesystem.splitdrive('!!foo!bar!baz'))
@@ -1663,8 +1601,6 @@ class DiskSpaceTest(TestCase):
         self.os.rename('!foo!bar', '!foo!baz')
         self.assertEqual(20, self.filesystem.get_disk_usage().used)
 
-    @unittest.skipIf(TestCase.is_windows and sys.version_info < (3, 3),
-                     'Links are not supported under Windows before Python 3.3')
     def test_that_hard_link_does_not_change_used_size(self):
         file1_path = 'test_file1'
         file2_path = 'test_file2'
@@ -1755,8 +1691,6 @@ class DiskSpaceTest(TestCase):
         self.filesystem.set_disk_usage(total_size=1000, path='d:')
         self.assertEqual(self.filesystem.get_disk_usage('d:!foo').free, 800)
 
-    @unittest.skipIf(sys.version_info < (3, 0),
-                     'Tests byte contents in Python3')
     def test_copying_preserves_byte_contents(self):
         source_file = self.filesystem.create_file('foo', contents=b'somebytes')
         dest_file = self.filesystem.create_file('bar')
@@ -1816,8 +1750,6 @@ class MountPointTest(TestCase):
         self.assertEqual(6, self.filesystem.get_object('e:!foo').st_dev)
         self.assertEqual(6, self.filesystem.get_object('E:!Foo!Baz').st_dev)
 
-    @unittest.skipIf(sys.version_info < (2, 7, 8),
-                     'UNC path support since Python 2.7.8')
     def test_that_unc_paths_are_auto_mounted(self):
         self.filesystem.is_windows_fs = True
         self.filesystem.create_dir('!!foo!bar!baz')

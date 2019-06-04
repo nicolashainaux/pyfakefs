@@ -21,7 +21,6 @@ that import the `os`, `io`, `path` `shutil`, and `pathlib` modules.
 
 The `setUpPyfakefs()` method binds these modules to the corresponding fake
 modules from `pyfakefs`.  Further, the `open()` built-in is bound to a fake
-`open()`.  In Python 2, built-in `file()` is similarly bound to the fake
 `open()`.
 
 It is expected that `setUpPyfakefs()` be invoked at the beginning of the
@@ -46,25 +45,14 @@ import zipfile  # noqa: F401 make sure it gets correctly stubbed, see #427
 
 from pyfakefs.fake_filesystem import set_uid, set_gid, reset_ids
 
-from pyfakefs.helpers import IS_PY2, IS_PYPY
-
-from pyfakefs.deprecator import Deprecator
+from pyfakefs.helpers import IS_PYPY
 
 try:
     from importlib.machinery import ModuleSpec
 except ImportError:
     ModuleSpec = object
 
-try:
-    # python >= 3.4
-    from importlib import reload
-except ImportError:
-    try:
-        # python 3.0 - 3.3
-        from imp import reload
-    except ImportError:
-        # python 2 - reload is built-in
-        pass
+from importlib import reload
 
 from pyfakefs import fake_filesystem
 from pyfakefs import fake_filesystem_shutil
@@ -76,11 +64,6 @@ if pathlib:
 
 if use_scandir:
     from pyfakefs import fake_scandir
-
-if sys.version_info < (3, ):
-    import __builtin__ as builtins  # pylint: disable=import-error
-else:
-    import builtins
 
 OS_MODULE = 'nt' if sys.platform == 'win32' else 'posix'
 PATH_MODULE = 'ntpath' if sys.platform == 'win32' else 'posixpath'
@@ -112,7 +95,7 @@ def load_doctests(loader, tests, ignore, module,
     return tests
 
 
-class TestCaseMixin(object):
+class TestCaseMixin:
     """Test case mixin that automatically replaces file-system related
     modules by fake implementations.
 
@@ -167,7 +150,7 @@ class TestCaseMixin(object):
                       allow_root_user=True):
         """Bind the file-related modules to the :py:class:`pyfakefs` fake file
         system instead of the real file system.  Also bind the fake `open()`
-        function, and on Python 2, the `file()` function.
+        function.
 
         Invoke this at the beginning of the `setUp()` method in your unit test
         class.
@@ -236,55 +219,8 @@ class TestCase(unittest.TestCase, TestCaseMixin):
         self.modules_to_patch = modules_to_patch
         self.allow_root_user = allow_root_user
 
-    @Deprecator('add_real_file')
-    def copyRealFile(self, real_file_path, fake_file_path=None,
-                     create_missing_dirs=True):
-        """Add the file `real_file_path` in the real file system to the same
-        path in the fake file system.
 
-        **This method is deprecated** in favor of
-        :py:meth:`FakeFilesystem..add_real_file`.
-        `copyRealFile()` is retained with limited functionality for backward
-        compatibility only.
-
-        Args:
-          real_file_path: Path to the file in both the real and fake
-            file systems
-          fake_file_path: Deprecated.  Use the default, which is
-            `real_file_path`.
-            If a value other than `real_file_path` is specified, a `ValueError`
-            exception will be raised.
-          create_missing_dirs: Deprecated.  Use the default, which creates
-            missing directories in the fake file system.  If `False` is
-            specified, a `ValueError` exception is raised.
-
-        Returns:
-          The newly created FakeFile object.
-
-        Raises:
-          IOError: If the file already exists in the fake file system.
-          ValueError: If deprecated argument values are specified.
-
-        See:
-          :py:meth:`FakeFileSystem.add_real_file`
-        """
-        if fake_file_path is not None and real_file_path != fake_file_path:
-            raise ValueError("CopyRealFile() is deprecated and no longer "
-                             "supports different real and fake file paths")
-        if not create_missing_dirs:
-            raise ValueError("CopyRealFile() is deprecated and no longer "
-                             "supports NOT creating missing directories")
-        return self._stubber.fs.add_real_file(real_file_path, read_only=False)
-
-    @DeprecationWarning
-    def tearDownPyfakefs(self):
-        """This method is deprecated and exists only for backward
-        compatibility. It does nothing.
-        """
-        pass
-
-
-class Patcher(object):
+class Patcher:
     """
     Instantiate a stub creator to bind and un-bind the file-related modules to
     the :py:mod:`pyfakefs` fake modules.
@@ -348,8 +284,8 @@ class Patcher(object):
             'shutil': fake_filesystem_shutil.FakeShutilModule,
             'io': fake_filesystem.FakeIoModule,
         }
-        if IS_PY2 or IS_PYPY:
-            # in Python 2 io.open, the module is referenced as _io
+        if IS_PYPY:
+            # in PyPy 2 io.open, the module is referenced as _io
             self._fake_module_classes['_io'] = fake_filesystem.FakeIoModule
 
         # class modules maps class names against a list of modules they can
@@ -495,12 +431,6 @@ class Patcher(object):
                 self._fct_modules.setdefault(
                     (name, fct.__name__, fct.__module__), set()).add(module)
 
-            if IS_PY2:
-                open_fcts = {name for name, fct in module.__dict__.items()
-                             if is_open_function(fct)}
-                for name in open_fcts:
-                    self._open_functions.setdefault(name, set()).add(module)
-
     def _refresh(self):
         """Renew the fake file system and set the _isStale flag to `False`."""
         if self._stubs is not None:
@@ -536,10 +466,6 @@ class Patcher(object):
         if not self._patching:
             self._patching = True
 
-            if IS_PY2:
-                self._stubs.smart_set(builtins, 'open', self.fake_open)
-                self._stubs.smart_set(builtins, 'file', self.fake_open)
-
             for name, modules in self._modules.items():
                 for module, attr in modules:
                     self._stubs.smart_set(
@@ -550,10 +476,6 @@ class Patcher(object):
                 attr = method.__get__(fake_module, fake_module.__class__)
                 for module in modules:
                     self._stubs.smart_set(module, name, attr)
-            if IS_PY2:
-                for name, modules in self._open_functions.items():
-                    for module in modules:
-                        self._stubs.smart_set(module, name, self.fake_open)
 
             self._dyn_patcher = DynamicPatcher(self)
             sys.meta_path.insert(0, self._dyn_patcher)
@@ -601,11 +523,12 @@ class Patcher(object):
         self.start_patching()
 
 
-class Pause(object):
+class Pause:
     """Simple context manager that allows to pause/resume patching the
     filesystem. Patching is paused in the context manager, and resumed after
     going out of it's scope.
     """
+
     def __init__(self, caller):
         """Initializes the context manager with the fake filesystem.
 
@@ -631,7 +554,7 @@ class Pause(object):
         return self._fs.resume()
 
 
-class DynamicPatcher(object):
+class DynamicPatcher:
     """A file loader that replaces file system related modules by their
     fake implementation if they are loaded after calling `setupPyFakefs()`.
     Implements the protocol needed for import hooks.
@@ -672,11 +595,6 @@ class DynamicPatcher(object):
         """Module finder for Python 3."""
         if self.needs_patch(fullname):
             return ModuleSpec(fullname, self)
-
-    def find_module(self, fullname, path=None):
-        """Module finder for Python 2."""
-        if self.needs_patch(fullname):
-            return self
 
     def load_module(self, fullname):
         """Replaces the module by its fake implementation."""

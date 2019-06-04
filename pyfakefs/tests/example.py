@@ -26,10 +26,6 @@ The modules related to file handling are bound to the respective fake modules:
 <pyfakefs.fake_filesystem.FakePathModule object...>
 >>> shutil     #doctest: +ELLIPSIS
 <pyfakefs.fake_filesystem_shutil.FakeShutilModule object...>
-
-Both `open()` and `file` built-ins are bound to the fake `open()` in Python 2.
-In Python 3, `open()` is an alias for `io.open()` and is bound to
-`FakeIoModule.open` instead.
 """
 
 import os

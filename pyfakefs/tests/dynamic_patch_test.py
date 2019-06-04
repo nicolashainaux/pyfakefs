@@ -13,7 +13,6 @@
 """
 Tests for patching modules loaded after `setupPyfakefs()`.
 """
-import sys
 import unittest
 
 from pyfakefs import fake_filesystem_unittest
@@ -26,8 +25,6 @@ class TestPyfakefsUnittestBase(fake_filesystem_unittest.TestCase):
         self.setUpPyfakefs()
 
 
-@unittest.skipIf((3, ) < sys.version_info < (3, 3),
-                 'Does not work with Python 3 < 3.3, including Pypy3 2.4')
 class DynamicImportPatchTest(TestPyfakefsUnittestBase):
     def __init__(self, methodName='runTest'):
         super(DynamicImportPatchTest, self).__init__(methodName)
@@ -53,7 +50,6 @@ class DynamicImportPatchTest(TestPyfakefsUnittestBase):
         self.assertTrue(self.fs.exists('test'))
         self.assertTrue(os.path.exists('test'))
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'disk_usage new in Python 3.3')
     def test_shutil_patch(self):
         import shutil
 

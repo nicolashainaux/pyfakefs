@@ -1,6 +1,18 @@
 # pyfakefs Release Notes
 The release versions are PyPi releases.
 
+## Version 4.0 (as yet unreleased)
+
+#### Changes
+  * removed support for Python 2
+  * removed support for deprecated names
+  
+#### New Features
+  * support keyword only arguments in fake `os` functions
+  * support for `src_dir_fd`  and `dst_dir_fd` argument in `os.rename`,
+    `os.replace` and `os.link`
+  * support for `follow_symlinks` argument in `os.link`
+
 ## Version 3.6 (as yet unreleased)
 
 #### Changes

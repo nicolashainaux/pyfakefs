@@ -331,8 +331,6 @@ class FakeFilesystemVsRealTest(TestCase):
         path = sep(path)
         os_method_names = [] if self.is_windows else ['readlink']
         os_method_names_no_args = ['getcwd']
-        if sys.version_info < (3, 0):
-            os_method_names_no_args.append('getcwdu')
         os_path_method_names = ['isabs',
                                 'isdir',
                                 'isfile',

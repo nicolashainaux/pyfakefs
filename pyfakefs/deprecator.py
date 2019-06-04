@@ -15,7 +15,7 @@ import functools
 import warnings
 
 
-class Deprecator(object):
+class Deprecator:
     """Decorator class for adding deprecated functions.
 
     Warnings are switched on by default.

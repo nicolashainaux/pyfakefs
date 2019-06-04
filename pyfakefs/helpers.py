@@ -20,39 +20,25 @@ from stat import S_IFLNK
 
 import os
 
-IS_PY2 = sys.version_info[0] < 3
 IS_PYPY = platform.python_implementation() == 'PyPy'
 IS_WIN = sys.platform == 'win32'
-
-try:
-    text_type = unicode  # Python 2
-except NameError:
-    text_type = str      # Python 3
 
 
 def is_int_type(val):
     """Return True if `val` is of integer type."""
-    try:               # Python 2
-        return isinstance(val, (int, long))
-    except NameError:  # Python 3
-        return isinstance(val, int)
+    return isinstance(val, int)
 
 
 def is_byte_string(val):
     """Return True if `val` is a bytes-like object, False for a unicode
     string."""
-    if not IS_PY2:
-        return not hasattr(val, 'encode')
-    return isinstance(val, (memoryview, str))
+    return not hasattr(val, 'encode')
 
 
 def is_unicode_string(val):
     """Return True if `val` is a unicode string, False for a bytes-like
     object."""
-    try:               # Python 2
-        return isinstance(val, unicode)
-    except NameError:  # Python 3
-        return hasattr(val, 'encode')
+    return hasattr(val, 'encode')
 
 
 def make_string_path(dir_name):
@@ -61,16 +47,12 @@ def make_string_path(dir_name):
     return dir_name
 
 
-class FakeStatResult(object):
+class FakeStatResult:
     """Mimics os.stat_result for use as return type of `stat()` and similar.
     This is needed as `os.stat_result` has no possibility to set
     nanosecond times directly.
     """
-    try:
-        long_type = long  # Python 2
-    except NameError:
-        long_type = int   # Python 3
-    _stat_float_times = sys.version_info >= (2, 5)
+    _stat_float_times = True
 
     def __init__(self, is_windows, user_id, group_id, initial_time=None):
         self._use_float = None
@@ -83,7 +65,7 @@ class FakeStatResult(object):
         self._st_size = None
         self.is_windows = is_windows
         if initial_time is not None:
-            self._st_atime_ns = self.long_type(initial_time * 1e9)
+            self._st_atime_ns = int(initial_time * 1e9)
         else:
             self._st_atime_ns = None
         self._st_mtime_ns = self._st_atime_ns
@@ -134,14 +116,9 @@ class FakeStatResult(object):
         self.st_uid = stat_result.st_uid
         self.st_gid = stat_result.st_gid
         self._st_size = stat_result.st_size
-        if sys.version_info < (3, 3):
-            self._st_atime_ns = self.long_type(stat_result.st_atime * 1e9)
-            self._st_mtime_ns = self.long_type(stat_result.st_mtime * 1e9)
-            self._st_ctime_ns = self.long_type(stat_result.st_ctime * 1e9)
-        else:
-            self._st_atime_ns = stat_result.st_atime_ns
-            self._st_mtime_ns = stat_result.st_mtime_ns
-            self._st_ctime_ns = stat_result.st_ctime_ns
+        self._st_atime_ns = stat_result.st_atime_ns
+        self._st_mtime_ns = stat_result.st_mtime_ns
+        self._st_ctime_ns = stat_result.st_ctime_ns
 
     @classmethod
     def stat_float_times(cls, newvalue=None):
@@ -180,17 +157,17 @@ class FakeStatResult(object):
     @st_ctime.setter
     def st_ctime(self, val):
         """Set the creation time in seconds."""
-        self._st_ctime_ns = self.long_type(val * 1e9)
+        self._st_ctime_ns = int(val * 1e9)
 
     @st_atime.setter
     def st_atime(self, val):
         """Set the access time in seconds."""
-        self._st_atime_ns = self.long_type(val * 1e9)
+        self._st_atime_ns = int(val * 1e9)
 
     @st_mtime.setter
     def st_mtime(self, val):
         """Set the modification time in seconds."""
-        self._st_mtime_ns = self.long_type(val * 1e9)
+        self._st_mtime_ns = int(val * 1e9)
 
     @property
     def st_size(self):
@@ -229,42 +206,41 @@ class FakeStatResult(object):
             return int(self.st_ctime)
         raise ValueError('Invalid item')
 
-    if sys.version_info >= (3, 3):
-        @property
-        def st_atime_ns(self):
-            """Return the access time in nanoseconds."""
-            return self._st_atime_ns
+    @property
+    def st_atime_ns(self):
+        """Return the access time in nanoseconds."""
+        return self._st_atime_ns
 
-        @property
-        def st_mtime_ns(self):
-            """Return the modification time in nanoseconds."""
-            return self._st_mtime_ns
+    @property
+    def st_mtime_ns(self):
+        """Return the modification time in nanoseconds."""
+        return self._st_mtime_ns
 
-        @property
-        def st_ctime_ns(self):
-            """Return the creation time in nanoseconds."""
-            return self._st_ctime_ns
+    @property
+    def st_ctime_ns(self):
+        """Return the creation time in nanoseconds."""
+        return self._st_ctime_ns
 
-        @st_atime_ns.setter
-        def st_atime_ns(self, val):
-            """Set the access time in nanoseconds."""
-            self._st_atime_ns = val
+    @st_atime_ns.setter
+    def st_atime_ns(self, val):
+        """Set the access time in nanoseconds."""
+        self._st_atime_ns = val
 
-        @st_mtime_ns.setter
-        def st_mtime_ns(self, val):
-            """Set the modification time of the fake file in nanoseconds."""
-            self._st_mtime_ns = val
+    @st_mtime_ns.setter
+    def st_mtime_ns(self, val):
+        """Set the modification time of the fake file in nanoseconds."""
+        self._st_mtime_ns = val
 
-        @st_ctime_ns.setter
-        def st_ctime_ns(self, val):
-            """Set the creation time of the fake file in nanoseconds."""
-            self._st_ctime_ns = val
+    @st_ctime_ns.setter
+    def st_ctime_ns(self, val):
+        """Set the creation time of the fake file in nanoseconds."""
+        self._st_ctime_ns = val
 
 
-class FileBufferIO(object):
-    """Stream class that handles both Python2 and Python3 string and
-    byte contents for files. The standard io.StringIO cannot be used
-    for strings due to the slightly different handling of newline mode.
+class FileBufferIO:
+    """Stream class that handles string and byte contents for files. The
+    standard io.StringIO cannot be used for strings due to the slightly
+    different handling of newline mode.
     Uses an io.BytesIO stream for the raw data and adds handling of encoding
     and newlines.
     """
@@ -289,8 +265,6 @@ class FileBufferIO(object):
         return contents.encode(self.encoding(), self.errors)
 
     def decoded_string(self, contents):
-        if IS_PY2 and not self._encoding:
-            return contents
         return contents.decode(self.encoding(), self.errors)
 
     def convert_newlines_for_writing(self, s):
@@ -321,26 +295,27 @@ class FileBufferIO(object):
         byte_contents = self._bytestream.read(size)
         if self.binary:
             read_contents = byte_contents
-            LF = b'\n'
+            linefeed = b'\n'
         else:
             read_contents = self.convert_newlines_after_reading(
                 self.decoded_string(byte_contents))
-            LF = '\n'
+            linefeed = '\n'
         end_pos = 0
 
+        length = 0
         if self._newline is None:
             end_pos = self._linelen_for_universal_newlines(byte_contents)
             if end_pos > 0:
-                length = read_contents.find(LF) + 1
+                length = read_contents.find(linefeed) + 1
         elif self._newline == '':
             end_pos = self._linelen_for_universal_newlines(byte_contents)
             if end_pos > 0:
                 if byte_contents[end_pos - 1] == ord(b'\r'):
-                    newline = '\r'
+                    newline = b'\r' if self.binary else '\r'
                 elif end_pos > 1 and byte_contents[end_pos - 2] == ord(b'\r'):
-                    newline = '\r\n'
+                    newline = b'\r\n' if self.binary else '\r\n'
                 else:
-                    newline = '\n'
+                    newline = b'\n' if self.binary else '\n'
                 length = read_contents.find(newline) + len(newline)
         else:
             newline = '\n' if self._newline == '-' else self._newline
@@ -390,7 +365,7 @@ class FileBufferIO(object):
         self._bytestream.write(self.encoded_string(s))
 
     def write(self, s):
-        if not IS_PY2 and self.binary != is_byte_string(s):
+        if self.binary != is_byte_string(s):
             raise TypeError('Incorrect type for writing')
         contents = self.convert_newlines_for_writing(s)
         length = len(contents)
@@ -409,10 +384,6 @@ class FileBufferIO(object):
         if not line:
             raise StopIteration
         return line
-
-    # Python 2 version
-    def next(self):
-        return self.__next__()
 
     def __getattr__(self, name):
         return getattr(self._bytestream, name)

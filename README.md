@@ -40,8 +40,8 @@ using convenience functions.
 ## Installation
 
 ### Compatibility
-pyfakefs works with CPython 2.7, 3.4 and above, on Linux, Windows and OSX 
-(MacOS), and with PyPy2 and PyPy3.
+pyfakefs works with CPython 3.4 and above, on Linux, Windows and OSX 
+(MacOS), and with PyPy3.
 
 pyfakefs works with [PyTest](http://doc.pytest.org) version 2.8.6 or above.
 
@@ -61,11 +61,11 @@ For example, pyfakefs will not work with [`lxml`](http://lxml.de/).  In this cas
 
 pyfakefs is currently automatically tested:
 * [![Build Status](https://travis-ci.org/jmcgeheeiv/pyfakefs.svg)](https://travis-ci.org/jmcgeheeiv/pyfakefs)
-  on Linux, with Python 2.7, and 3.4 to 3.7, using [Travis](https://travis-ci.org/jmcgeheeiv/pyfakefs)
+  on Linux, with Python 3.4 to 3.7, using [Travis](https://travis-ci.org/jmcgeheeiv/pyfakefs)
 * [![Build Status](https://travis-ci.org/jmcgeheeiv/pyfakefs.svg)](https://travis-ci.org/jmcgeheeiv/pyfakefs)
-  on MacOS, with Python 2.7, 3.6 and 3.7, using [Travis](https://travis-ci.org/jmcgeheeiv/pyfakefs)
+  on MacOS, with Python 3.6 and 3.7, using [Travis](https://travis-ci.org/jmcgeheeiv/pyfakefs)
 * [![Build status](https://ci.appveyor.com/api/projects/status/4o8j21ufuo056873/branch/master?svg=true)](https://ci.appveyor.com/project/jmcgeheeiv/pyfakefs/branch/master)
-  on Windows, with Python 2.7, and 3.4 to 3.7 using [Appveyor](https://ci.appveyor.com/project/jmcgeheeiv/pyfakefs)
+  on Windows, with Python 3.4 to 3.7 using [Appveyor](https://ci.appveyor.com/project/jmcgeheeiv/pyfakefs)
 
 ### Running pyfakefs unit tests
 

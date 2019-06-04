@@ -71,7 +71,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         """chdir should raise OSError if the target is not a directory."""
         filename = self.make_path('foo', 'bar')
         self.create_file(filename)
-        self.assert_raises_os_error(self.not_dir_error(),
+        self.assert_raises_os_error(errno.ENOTDIR,
                                     self.os.chdir, filename)
 
     def test_consecutive_chdir(self):
@@ -118,8 +118,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         files.sort()
         self.assertEqual(files, sorted(self.os.listdir(directory)))
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'file descriptor as path new in Python 3.3')
     def test_listdir_uses_open_fd_as_path(self):
         self.check_posix_only()
         if os.listdir not in os.supports_fd:
@@ -156,7 +154,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
     def test_listdir_error(self):
         file_path = self.make_path('foo', 'bar', 'baz')
         self.create_file(file_path)
-        self.assert_raises_os_error(self.not_dir_error(),
+        self.assert_raises_os_error(errno.ENOTDIR,
                                     self.os.listdir, file_path)
 
     def test_exists_current_dir(self):
@@ -170,8 +168,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertEqual(files, sorted(self.os.listdir(self.base_path)))
 
     def test_fdopen(self):
-        # under Windows and Python2, hangs in closing file
-        self.skip_real_fs_failure(skip_posix=False, skip_python3=False)
         file_path1 = self.make_path('some_file1')
         self.create_file(file_path1, contents='contents here1')
         with self.open(file_path1, 'r') as fake_file1:
@@ -187,8 +183,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assert_raises_os_error(errno.EBADF, self.os.fdopen, 100)
 
     def test_closed_file_descriptor(self):
-        # under Windows and Python2, hangs in tearDown
-        self.skip_real_fs_failure(skip_posix=False, skip_python3=False)
         first_path = self.make_path('some_file1')
         second_path = self.make_path('some_file2')
         third_path = self.make_path('some_file3')
@@ -225,8 +219,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.os.fdopen(fileno1)
         self.os.fdopen(fileno1, 'r')
         if not is_root():
-            exception = OSError if self.is_python2 else IOError
-            self.assertRaises(exception, self.os.fdopen, fileno1, 'w')
+            self.assertRaises(IOError, self.os.fdopen, fileno1, 'w')
         else:
             self.os.fdopen(fileno1, 'w')
             self.os.close(fileno1)
@@ -250,8 +243,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertTrue(stat.S_IFREG & self.os.stat(file_path).st_mode)
         self.assertEqual(5, self.os.stat(file_path)[stat.ST_SIZE])
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'file descriptor as path new in Python 3.3')
     def test_stat_uses_open_fd_as_path(self):
         self.skip_real_fs()
         self.assert_raises_os_error(errno.EBADF, self.os.stat, 5)
@@ -262,8 +253,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             self.assertTrue(
                 stat.S_IFREG & self.os.stat(f.filedes)[stat.ST_MODE])
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_stat_no_follow_symlinks_posix(self):
         """Test that stat with follow_symlinks=False behaves like lstat."""
         self.check_posix_only()
@@ -283,8 +272,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
                          self.os.stat(link_path, follow_symlinks=False)[
                              stat.ST_SIZE])
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_stat_no_follow_symlinks_windows(self):
         """Test that stat with follow_symlinks=False behaves like lstat."""
         self.check_windows_only()
@@ -445,8 +432,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.skip_if_symlink_not_supported()
         self.check_remove_link_ending_with_sep(errno.EACCES)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'file descriptor as path new in Python 3.3')
     def test_lstat_uses_open_fd_as_path(self):
         self.skip_if_symlink_not_supported()
         if os.lstat not in os.supports_fd:
@@ -1059,7 +1044,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertTrue(self.os.path.exists(link_path))
         self.assertFalse(self.os.path.islink(link_path))
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'replace is new in Python 3.3')
     def test_replace_existing_directory_should_raise_under_windows(self):
         """Renaming to an existing directory raises OSError under Windows."""
         self.check_windows_only()
@@ -1144,7 +1128,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assert_raises_os_error(
             errno.EEXIST, self.os.rename, old_file_path, new_file_path)
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'replace is new in Python 3.3')
     def test_replace_to_existent_file(self):
         """Replaces an existing file (does not work with `rename()` under
         Windows)."""
@@ -1220,8 +1203,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
     def test_append_mode_tell_linux_windows(self):
         # Regression test for #300
         self.check_linux_and_windows()
-        tell_result = 5 if self.is_python2 else 7
-        self.check_append_mode_tell_after_truncate(tell_result)
+        self.check_append_mode_tell_after_truncate(7)
 
     def test_append_mode_tell_macos(self):
         # Regression test for #300
@@ -1345,7 +1327,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         file_path = self.os.path.join(directory, 'plugh')
         self.create_file(file_path)
         self.assertTrue(self.os.path.exists(file_path))
-        self.assert_raises_os_error(self.not_dir_error(),
+        self.assert_raises_os_error(errno.ENOTDIR,
                                     self.os.rmdir, file_path)
         self.assert_raises_os_error(error_nr, self.os.rmdir, '.')
 
@@ -1698,8 +1680,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             self.os.makedirs(directory)
             self.assertTrue(self.os.path.exists(directory))
 
-    @unittest.skipIf(sys.version_info < (3, 2),
-                     'os.makedirs(exist_ok) argument new in version 3.2')
     def test_makedirs_exist_ok(self):
         """makedirs uses the exist_ok argument"""
         directory = self.make_path('xyzzy', 'foo')
@@ -1815,8 +1795,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             self.assertFalse(self.os.access(path, self.os.W_OK))
             self.assertFalse(self.os.access(path, self.rw))
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_access_symlink(self):
         self.skip_if_symlink_not_supported()
         self.skip_real_fs()
@@ -1877,8 +1855,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertTrue(st.st_mode & stat.S_IFREG)
         self.assertFalse(st.st_mode & stat.S_IFDIR)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'file descriptor as path new in Python 3.3')
     def test_chmod_uses_open_fd_as_path(self):
         self.check_posix_only()
         self.skip_real_fs()
@@ -1891,8 +1867,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             st = self.os.stat(path)
             self.assert_mode_equal(0o6543, st.st_mode)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_chmod_follow_symlink(self):
         self.check_posix_only()
         if self.use_real_fs() and 'chmod' not in os.supports_follow_symlinks:
@@ -1908,8 +1882,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         st = self.os.stat(link_path, follow_symlinks=False)
         self.assert_mode_equal(0o777, st.st_mode)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_chmod_no_follow_symlink(self):
         self.check_posix_only()
         if self.use_real_fs() and 'chmod' not in os.supports_follow_symlinks:
@@ -1926,8 +1898,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assert_mode_equal(0o6543, st.st_mode)
 
     def test_lchmod(self):
-        """lchmod shall behave like chmod with follow_symlinks=True
-        since Python 3.3"""
+        """lchmod shall behave like chmod with follow_symlinks=True"""
         self.check_posix_only()
         self.skip_real_fs()
         path = self.make_path('some_file')
@@ -1988,8 +1959,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertEqual(st[stat.ST_UID], 200)
         self.assertEqual(st[stat.ST_GID], 201)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'file descriptor as path new in Python 3.3')
     def test_chown_uses_open_fd_as_path(self):
         self.check_posix_only()
         self.skip_real_fs()
@@ -2002,8 +1971,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             st = self.os.stat(file_path)
             self.assertEqual(st[stat.ST_UID], 100)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_chown_follow_symlink(self):
         self.skip_real_fs()
         file_path = self.make_path('some_file')
@@ -2019,8 +1986,6 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertNotEqual(st[stat.ST_UID], 100)
         self.assertNotEqual(st[stat.ST_GID], 101)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_chown_no_follow_symlink(self):
         self.skip_real_fs()
         file_path = self.make_path('some_file')
@@ -2708,7 +2673,7 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.create_file(filename)
         filename1 = self.make_path('Foo', 'Bar')
         self.assert_raises_os_error(
-            self.not_dir_error(), self.os.chdir, filename1)
+            errno.ENOTDIR, self.os.chdir, filename1)
 
     def test_listdir_returns_list(self):
         directory_root = self.make_path('xyzzy')
@@ -2742,9 +2707,8 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         fileno1 = fake_file1.fileno()
         self.os.fdopen(fileno1)
         self.os.fdopen(fileno1, 'r')
-        exception = OSError if self.is_python2 else IOError
         if not is_root():
-            self.assertRaises(exception, self.os.fdopen, fileno1, 'w')
+            self.assertRaises(IOError, self.os.fdopen, fileno1, 'w')
         else:
             self.os.fdopen(fileno1, 'w')
 
@@ -2759,8 +2723,6 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.assertTrue(stat.S_IFREG & self.os.stat(file_path1).st_mode)
         self.assertEqual(5, self.os.stat(file_path1)[stat.ST_SIZE])
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_stat_no_follow_symlinks_posix(self):
         """Test that stat with follow_symlinks=False behaves like lstat."""
         self.check_posix_only()
@@ -3227,7 +3189,6 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.os.link(file_path, link_path)
         self.assertTrue(self.os.path.exists(link_path))
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'replace is new in Python 3.3')
     def test_replace_existing_directory_should_raise_under_windows(self):
         """Renaming to an existing directory raises OSError under Windows."""
         self.check_windows_only()
@@ -3290,7 +3251,6 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
                                     old_file_path.upper(),
                                     new_file_path.upper())
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'replace is new in Python 3.3')
     def test_replace_to_existent_file(self):
         """Replaces an existing file (does not work with `rename()` under
         Windows)."""
@@ -3508,8 +3468,6 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
                                     self.os.path.join(link_path.upper(),
                                                       'newdir'))
 
-    @unittest.skipIf(sys.version_info < (3, 2),
-                     'os.makedirs(exist_ok) argument new in version 3.2')
     def test_makedirs_exist_ok(self):
         """makedirs uses the exist_ok argument"""
         directory = self.make_path('xyzzy', 'foo')
@@ -3670,9 +3628,8 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertEqual(200, st.st_mtime)
         self.assertTrue(isinstance(st.st_mtime, int))
 
-        if sys.version_info >= (3, 3):
-            self.assertEqual(200912300000, st.st_atime_ns)
-            self.assertEqual(200912300000, st.st_mtime_ns)
+        self.assertEqual(200912300000, st.st_atime_ns)
+        self.assertEqual(200912300000, st.st_mtime_ns)
 
         self.assertEqual(200, st.st_mtime)
         # actual tests
@@ -3682,9 +3639,8 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertTrue(isinstance(st.st_atime, int))
         self.assertEqual(220, st.st_mtime)
         self.assertTrue(isinstance(st.st_mtime, int))
-        if sys.version_info >= (3, 3):
-            self.assertEqual(220912300000, st.st_atime_ns)
-            self.assertEqual(220912300000, st.st_mtime_ns)
+        self.assertEqual(220912300000, st.st_atime_ns)
+        self.assertEqual(220912300000, st.st_mtime_ns)
 
     def test_utime_sets_current_time_if_args_is_none_with_floats_n_sec(self):
         fake_filesystem.FakeOsModule.stat_float_times(False)
@@ -3745,8 +3701,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertEqual(1.0, st.st_atime)
         self.assertEqual(2.0, st.st_mtime)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_utime_follow_symlinks(self):
         path = self.make_path('some_file')
         self.createTestFile(path)
@@ -3758,8 +3712,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertEqual(1, st.st_atime)
         self.assertEqual(2, st.st_mtime)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'follow_symlinks new in Python 3.3')
     def test_utime_no_follow_symlinks(self):
         path = self.make_path('some_file')
         self.createTestFile(path)
@@ -3788,7 +3740,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertRaises(TypeError, self.os.utime, path, (1, 2, 3))
         self.assertRaises(TypeError, self.os.utime, path, (1, 'str'))
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'ns new in Python 3.3')
     def test_utime_sets_specified_time_in_ns(self):
         # set up
         path = self.make_path('some_file')
@@ -3802,7 +3753,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertEqual(0.2, st.st_atime)
         self.assertEqual(0.4, st.st_mtime)
 
-    @unittest.skipIf(sys.version_info < (3, 3), 'ns new in Python 3.3')
     def test_utime_incorrect_ns_argument_raises(self):
         file_path = 'some_file'
         self.filesystem.create_file(file_path)
@@ -3812,8 +3762,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         self.assertRaises(ValueError, self.os.utime, file_path, times=(1, 2),
                           ns=(100, 200))
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'file descriptor as path new in Python 3.3')
     def test_utime_uses_open_fd_as_path(self):
         if os.utime not in os.supports_fd:
             self.skip_real_fs()
@@ -4037,16 +3985,12 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
         self.assert_mode_equal(0o666, self.os.stat(file_path).st_mode)
         self.os.close(file_des)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'Exclusive mode new in Python 3.3')
     def test_open_exclusive(self):
         file_path = self.make_path('file1')
         file_des = self.os.open(file_path, os.O_RDWR | os.O_EXCL | os.O_CREAT)
         self.assertTrue(self.os.path.exists(file_path))
         self.os.close(file_des)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'Exclusive mode new in Python 3.3')
     def test_open_exclusive_raises_if_file_exists(self):
         file_path = self.make_path('file1')
         self.create_file(file_path, contents=b'contents')
@@ -4055,8 +3999,6 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
         self.assert_raises_io_error(errno.EEXIST, self.os.open, file_path,
                                     os.O_RDWR | os.O_EXCL | os.O_CREAT)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'Exclusive mode new in Python 3.3')
     def test_open_exclusive_raises_if_symlink_exists_in_posix(self):
         self.check_posix_only()
         link_path = self.make_path('link')
@@ -4066,8 +4008,6 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
             errno.EEXIST, self.os.open, link_path,
             os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_EXCL)
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     'Exclusive mode new in Python 3.3')
     def test_open_exclusive_if_symlink_exists_works_in_windows(self):
         self.check_windows_only()
         self.skip_if_symlink_not_supported()
@@ -4352,8 +4292,7 @@ class FakeOsModuleWalkTest(FakeOsModuleTestBase):
         # We do not actually care what, if anything, is returned.
         for _ in self.os.walk(filename, onerror=self.StoreErrno):
             pass
-        self.assertTrue(self.GetErrno() in (self.not_dir_error(),
-                                            errno.EACCES))
+        self.assertTrue(self.GetErrno() in (errno.ENOTDIR, errno.EACCES))
 
     def test_walk_skips_removed_directories(self):
         """Caller can modify list of directories to visit while walking."""
@@ -4432,8 +4371,6 @@ class RealOsModuleWalkTest(FakeOsModuleWalkTest):
         return True
 
 
-@unittest.skipIf(sys.version_info < (3, 3),
-                 'dir_fd argument was introduced in Python 3.3')
 class FakeOsModuleDirFdTest(FakeOsModuleTestBase):
     def setUp(self):
         super(FakeOsModuleDirFdTest, self).setUp()
@@ -4715,8 +4652,7 @@ class FakeScandirTest(FakeOsModuleTestBase):
     def setUp(self):
         super(FakeScandirTest, self).setUp()
         self.supports_symlinks = (not self.is_windows or
-                                  not self.use_real_fs() and
-                                  not self.is_python2)
+                                  not self.use_real_fs())
 
         if use_scandir_package:
             if self.use_real_fs():
@@ -4891,8 +4827,6 @@ class RealScandirFdTest(FakeScandirFdTest):
         return True
 
 
-@unittest.skipIf(TestCase.is_python2,
-                 reason='Xattr only supported in Linux/Python 3')
 class FakeExtendedAttributeTest(FakeOsModuleTestBase):
     def setUp(self):
         super(FakeExtendedAttributeTest, self).setUp()
@@ -4910,12 +4844,12 @@ class FakeExtendedAttributeTest(FakeOsModuleTestBase):
                           self.file_path, 'test', 'value')
         self.assert_raises_os_error(errno.EEXIST, self.os.setxattr,
                                     self.file_path, 'test', b'value',
-                                    self.os.XATTR_REPLACE)
+                                    flags=self.os.XATTR_REPLACE)
         self.os.setxattr(self.file_path, 'test', b'value')
         self.assertEqual(b'value', self.os.getxattr(self.file_path, 'test'))
         self.assert_raises_os_error(errno.ENODATA, self.os.setxattr,
                                     self.file_path, 'test', b'value',
-                                    self.os.XATTR_CREATE)
+                                    flags=self.os.XATTR_CREATE)
 
     def test_removeattr(self):
         self.os.removexattr(self.file_path, 'test')
