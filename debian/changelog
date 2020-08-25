@@ -1,0 +1,5 @@
+python3-pyfakefs (4.1.0-0ubuntu1) focal; urgency=low
+
+  * Add the necessary files to package John McGehee's pyfakefs for Ubuntu. See upstream package at https://github.com/jmcgeheeiv/pyfakefs.
+
+ -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Tue, 25 Aug 2020 06:47:07 +0200
