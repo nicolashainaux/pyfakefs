@@ -1,3 +1,10 @@
+python3-pyfakefs (4.3.3-0ubuntu1) focal; urgency=low
+
+  * Update to 4.3.3 release.
+
+ -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Tue, 29 Dec 2020 07:18:41 +0100
+
+
 python3-pyfakefs (4.1.0-0ubuntu1) focal; urgency=low
 
   * Add the necessary files to package John McGehee's pyfakefs for Ubuntu. See upstream package at https://github.com/jmcgeheeiv/pyfakefs.
