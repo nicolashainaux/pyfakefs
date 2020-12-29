@@ -184,7 +184,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
 
     def test_out_of_range_fdopen(self):
         # test some file descriptor that is clearly out of range
-        self.assert_raises_os_error(errno.EBADF, self.os.fdopen, 100)
+        self.assert_raises_os_error(errno.EBADF, self.os.fdopen, 500)
 
     def test_closed_file_descriptor(self):
         first_path = self.make_path('some_file1')
@@ -1753,13 +1753,13 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertRaises(TypeError, self.os.fdatasync, "zero")
 
     def test_fsync_raises_on_invalid_fd(self):
-        self.assert_raises_os_error(errno.EBADF, self.os.fsync, 100)
+        self.assert_raises_os_error(errno.EBADF, self.os.fsync, 500)
 
     def test_fdatasync_raises_on_invalid_fd(self):
         # No open files yet
         self.check_linux_only()
         self.assert_raises_os_error(errno.EINVAL, self.os.fdatasync, 0)
-        self.assert_raises_os_error(errno.EBADF, self.os.fdatasync, 100)
+        self.assert_raises_os_error(errno.EBADF, self.os.fdatasync, 500)
 
     def test_fsync_pass_posix(self):
         self.check_posix_only()
@@ -2694,6 +2694,22 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.os.close(write_fd)
         self.os.close(fd)
 
+    def test_read_write_pipe(self):
+        read_fd, write_fd = self.os.pipe()
+        self.assertEqual(4, self.os.write(write_fd, b'test'))
+        self.assertEqual(b'test', self.os.read(read_fd, 4))
+        self.os.close(read_fd)
+        self.os.close(write_fd)
+
+    def test_open_existing_pipe(self):
+        if self.is_pypy:
+            raise unittest.SkipTest('Does not work correctly with PyPy')
+        read_fd, write_fd = self.os.pipe()
+        with self.open(write_fd, 'wb') as f:
+            self.assertEqual(4, f.write(b'test'))
+        with self.open(read_fd, 'rb') as f:
+            self.assertEqual(b'test', f.read(4))
+
     def test_write_to_pipe(self):
         read_fd, write_fd = self.os.pipe()
         self.os.write(write_fd, b'test')
@@ -3044,6 +3060,8 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         # Regression test for #317
         self.check_posix_only()
         dest_dir_path = self.make_path('Dest')
+        # seems to behave differently under different MacOS versions
+        self.skip_real_fs()
         new_dest_dir_path = self.make_path('dest')
         self.os.mkdir(dest_dir_path)
         source_dir_path = self.make_path('src')
@@ -3590,6 +3608,7 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.os.fsync(test_fd)
         # And just for sanity, double-check that this still raises
         self.assert_raises_os_error(errno.EBADF, self.os.fsync, test_fd + 10)
+        test_file.close()
 
     def test_chmod(self):
         # set up
@@ -4555,6 +4574,20 @@ class FakeOsModuleWalkTest(FakeOsModuleTestBase):
                                self.os.path.join(base_dir, 'created_link'),
                                followlinks=True)
 
+    def test_walk_linked_file_in_subdir(self):
+        # regression test for #559 (tested for link on incomplete path)
+        self.check_posix_only()
+        # need to have a top-level link to reproduce the bug - skip real fs
+        self.skip_real_fs()
+        file_path = '/foo/bar/baz'
+        self.create_file(file_path)
+        self.create_symlink('bar', file_path)
+        expected = [
+            ('/foo', ['bar'], []),
+            ('/foo/bar', [], ['baz'])
+        ]
+        self.assertWalkResults(expected, '/foo')
+
     def test_base_dirpath(self):
         # regression test for #512
         file_path = self.make_path('foo', 'bar', 'baz')
@@ -4645,6 +4678,7 @@ class FakeOsModuleDirFdTest(FakeOsModuleTestBase):
         self.assertTrue(self.os.path.exists('/bat'))
 
     def test_readlink(self):
+        self.skip_if_symlink_not_supported()
         self.filesystem.create_symlink('/meyer/lemon/pie', '/foo/baz')
         self.filesystem.create_symlink('/geo/metro', '/meyer')
         self.assertRaises(

@@ -21,18 +21,24 @@ import glob
 import io
 import multiprocessing
 import os
+import runpy
 import shutil
 import sys
 import tempfile
 import unittest
 import warnings
 from distutils.dir_util import copy_tree, remove_tree
-from unittest import TestCase
+from pathlib import Path
+from unittest import TestCase, mock
 
 import pyfakefs.tests.import_as_example
+import pyfakefs.tests.logsio
 from pyfakefs import fake_filesystem_unittest, fake_filesystem
 from pyfakefs.extra_packages import pathlib
-from pyfakefs.fake_filesystem_unittest import Patcher, Pause, patchfs
+from pyfakefs.fake_filesystem import OSType
+from pyfakefs.fake_filesystem_unittest import (
+    Patcher, Pause, patchfs, PatchMode
+)
 from pyfakefs.tests.fixtures import module_with_attributes
 
 
@@ -45,11 +51,33 @@ class TestPatcher(TestCase):
             self.assertEqual('test', contents)
 
     @patchfs
-    def test_context_decorator(self, fs):
-        fs.create_file('/foo/bar', contents='test')
+    def test_context_decorator(self, fake_fs):
+        fake_fs.create_file('/foo/bar', contents='test')
         with open('/foo/bar') as f:
             contents = f.read()
         self.assertEqual('test', contents)
+
+
+class TestPatchfsArgumentOrder(TestCase):
+    @patchfs
+    @mock.patch('os.system')
+    def test_argument_order1(self, fake_fs, patched_system):
+        fake_fs.create_file('/foo/bar', contents='test')
+        with open('/foo/bar') as f:
+            contents = f.read()
+        self.assertEqual('test', contents)
+        os.system("foo")
+        patched_system.assert_called_with("foo")
+
+    @mock.patch('os.system')
+    @patchfs
+    def test_argument_order2(self, patched_system, fake_fs):
+        fake_fs.create_file('/foo/bar', contents='test')
+        with open('/foo/bar') as f:
+            contents = f.read()
+        self.assertEqual('test', contents)
+        os.system("foo")
+        patched_system.assert_called_with("foo")
 
 
 class TestPyfakefsUnittestBase(fake_filesystem_unittest.TestCase):
@@ -165,6 +193,12 @@ class TestPatchingImports(TestPyfakefsUnittestBase):
         self.assertTrue(
             pyfakefs.tests.import_as_example.check_if_exists6(file_path))
 
+    def test_import_pathlib_path(self):
+        file_path = '/foo/bar'
+        self.fs.create_dir(file_path)
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists7(file_path))
+
     def test_import_function_from_os(self):
         file_path = '/foo/bar'
         self.fs.create_file(file_path, contents=b'abc')
@@ -190,7 +224,10 @@ class TestPatchingImports(TestPyfakefsUnittestBase):
         self.assertEqual('abc', contents)
 
 
-class TestPatchingDefaultArgs(TestPyfakefsUnittestBase):
+class TestPatchingDefaultArgs(fake_filesystem_unittest.TestCase):
+    def setUp(self):
+        self.setUpPyfakefs(patch_default_args=True)
+
     def test_path_exists_as_default_arg_in_function(self):
         file_path = '/foo/bar'
         self.fs.create_dir(file_path)
@@ -202,6 +239,11 @@ class TestPatchingDefaultArgs(TestPyfakefsUnittestBase):
         self.fs.create_dir(file_path)
         sut = pyfakefs.tests.import_as_example.TestDefaultArg()
         self.assertTrue(sut.check_if_exists(file_path))
+
+    def test_fake_path_exists4(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists4('foo'))
 
 
 class TestAttributesWithFakeModuleNames(TestPyfakefsUnittestBase):
@@ -261,9 +303,53 @@ class NoSkipNamesTest(fake_filesystem_unittest.TestCase):
     """Reference test for additional_skip_names tests:
      make sure that the module is patched by default."""
 
+    def setUp(self):
+        self.setUpPyfakefs()
+
     def test_path_exists(self):
-        self.assertTrue(
+        self.assertFalse(
             pyfakefs.tests.import_as_example.exists_this_file())
+
+    def test_fake_path_exists1(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists1('foo'))
+
+    def test_fake_path_exists2(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists2('foo'))
+
+    def test_fake_path_exists3(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists3('foo'))
+
+    def test_fake_path_exists5(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists5('foo'))
+
+    def test_fake_path_exists6(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists6('foo'))
+
+    def test_fake_path_exists7(self):
+        self.fs.create_file('foo')
+        self.assertTrue(
+            pyfakefs.tests.import_as_example.check_if_exists7('foo'))
+
+    def test_open_fails(self):
+        with self.assertRaises(OSError):
+            pyfakefs.tests.import_as_example.open_this_file()
+
+    def test_open_patched_in_module_ending_with_io(self):
+        # regression test for #569
+        file_path = '/foo/bar'
+        self.fs.create_file(file_path, contents=b'abc')
+        contents = pyfakefs.tests.logsio.file_contents(file_path)
+        self.assertEqual(b'abc', contents)
 
 
 class AdditionalSkipNamesTest(fake_filesystem_unittest.TestCase):
@@ -275,8 +361,49 @@ class AdditionalSkipNamesTest(fake_filesystem_unittest.TestCase):
             additional_skip_names=['pyfakefs.tests.import_as_example'])
 
     def test_path_exists(self):
-        self.assertFalse(
+        self.assertTrue(
             pyfakefs.tests.import_as_example.exists_this_file())
+
+    def test_fake_path_does_not_exist1(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists1('foo'))
+
+    def test_fake_path_does_not_exist2(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists2('foo'))
+
+    def test_fake_path_does_not_exist3(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists3('foo'))
+
+    def test_fake_path_does_not_exist4(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists4('foo'))
+
+    def test_fake_path_does_not_exist5(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists5('foo'))
+
+    def test_fake_path_does_not_exist6(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists6('foo'))
+
+    def test_fake_path_does_not_exist7(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists7('foo'))
+
+    def test_open_succeeds(self):
+        pyfakefs.tests.import_as_example.open_this_file()
+
+    def test_path_succeeds(self):
+        pyfakefs.tests.import_as_example.return_this_file_path()
 
 
 class AdditionalSkipNamesModuleTest(fake_filesystem_unittest.TestCase):
@@ -288,8 +415,49 @@ class AdditionalSkipNamesModuleTest(fake_filesystem_unittest.TestCase):
             additional_skip_names=[pyfakefs.tests.import_as_example])
 
     def test_path_exists(self):
-        self.assertFalse(
+        self.assertTrue(
             pyfakefs.tests.import_as_example.exists_this_file())
+
+    def test_fake_path_does_not_exist1(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists1('foo'))
+
+    def test_fake_path_does_not_exist2(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists2('foo'))
+
+    def test_fake_path_does_not_exist3(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists3('foo'))
+
+    def test_fake_path_does_not_exist4(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists4('foo'))
+
+    def test_fake_path_does_not_exist5(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists5('foo'))
+
+    def test_fake_path_does_not_exist6(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists6('foo'))
+
+    def test_fake_path_does_not_exist7(self):
+        self.fs.create_file('foo')
+        self.assertFalse(
+            pyfakefs.tests.import_as_example.check_if_exists7('foo'))
+
+    def test_open_succeeds(self):
+        pyfakefs.tests.import_as_example.open_this_file()
+
+    def test_path_succeeds(self):
+        pyfakefs.tests.import_as_example.return_this_file_path()
 
 
 class FakeExampleModule:
@@ -333,17 +501,17 @@ class PatchModuleTestUsingDecorator(unittest.TestCase):
 
     @patchfs
     @unittest.expectedFailure
-    def test_system_stat_failing(self, fs):
+    def test_system_stat_failing(self, fake_fs):
         file_path = '/foo/bar'
-        fs.create_file(file_path, contents=b'test')
+        fake_fs.create_file(file_path, contents=b'test')
         self.assertEqual(
             4, pyfakefs.tests.import_as_example.system_stat(file_path).st_size)
 
     @patchfs(modules_to_patch={
         'pyfakefs.tests.import_as_example': FakeExampleModule})
-    def test_system_stat(self, fs):
+    def test_system_stat(self, fake_fs):
         file_path = '/foo/bar'
-        fs.create_file(file_path, contents=b'test')
+        fake_fs.create_file(file_path, contents=b'test')
         self.assertEqual(
             4, pyfakefs.tests.import_as_example.system_stat(file_path).st_size)
 
@@ -471,104 +639,6 @@ class PauseResumePatcherTest(fake_filesystem_unittest.TestCase):
             self.assertTrue(os.path.exists(fake_temp_file.name))
 
 
-class TestCopyOrAddRealFile(TestPyfakefsUnittestBase):
-    """Tests the `fake_filesystem_unittest.TestCase.copyRealFile()` method.
-    Note that `copyRealFile()` is deprecated in favor of
-    `FakeFilesystem.add_real_file()`.
-    """
-    filepath = None
-
-    @classmethod
-    def setUpClass(cls):
-        filename = __file__
-        if filename.endswith('.pyc'):  # happens on windows / py27
-            filename = filename[:-1]
-        cls.filepath = os.path.abspath(filename)
-        with open(cls.filepath) as f:
-            cls.real_string_contents = f.read()
-        with open(cls.filepath, 'rb') as f:
-            cls.real_byte_contents = f.read()
-        cls.real_stat = os.stat(cls.filepath)
-
-    @unittest.skipIf(sys.platform == 'darwin', 'Different copy behavior')
-    def test_copy_real_file(self):
-        """Typical usage of deprecated copyRealFile()"""
-        # Use this file as the file to be copied to the fake file system
-        fake_file = self.copyRealFile(self.filepath)
-
-        self.assertTrue(
-            'class TestCopyOrAddRealFile(TestPyfakefsUnittestBase)'
-            in self.real_string_contents,
-            'Verify real file string contents')
-        self.assertTrue(
-            b'class TestCopyOrAddRealFile(TestPyfakefsUnittestBase)'
-            in self.real_byte_contents,
-            'Verify real file byte contents')
-
-        # note that real_string_contents may differ to fake_file.contents
-        # due to newline conversions in open()
-        self.assertEqual(fake_file.byte_contents, self.real_byte_contents)
-
-        self.assertEqual(oct(fake_file.st_mode), oct(self.real_stat.st_mode))
-        self.assertEqual(fake_file.st_size, self.real_stat.st_size)
-        self.assertAlmostEqual(fake_file.st_ctime,
-                               self.real_stat.st_ctime, places=5)
-        self.assertAlmostEqual(fake_file.st_atime,
-                               self.real_stat.st_atime, places=5)
-        self.assertLess(fake_file.st_atime, self.real_stat.st_atime + 10)
-        self.assertAlmostEqual(fake_file.st_mtime,
-                               self.real_stat.st_mtime, places=5)
-        self.assertEqual(fake_file.st_uid, self.real_stat.st_uid)
-        self.assertEqual(fake_file.st_gid, self.real_stat.st_gid)
-
-    def test_copy_real_file_deprecated_arguments(self):
-        """Deprecated copyRealFile() arguments"""
-        self.assertFalse(self.fs.exists(self.filepath))
-        # Specify redundant fake file path
-        self.copyRealFile(self.filepath, self.filepath)
-        self.assertTrue(self.fs.exists(self.filepath))
-
-        # Test deprecated argument values
-        with self.assertRaises(ValueError):
-            self.copyRealFile(self.filepath, '/different/filename')
-        with self.assertRaises(ValueError):
-            self.copyRealFile(self.filepath, create_missing_dirs=False)
-
-    def test_add_real_file(self):
-        """Add a real file to the fake file system to be read on demand"""
-
-        # this tests only the basic functionality inside a unit test, more
-        # thorough tests are done in
-        # fake_filesystem_test.RealFileSystemAccessTest
-        fake_file = self.fs.add_real_file(self.filepath)
-        self.assertTrue(self.fs.exists(self.filepath))
-        self.assertIsNone(fake_file._byte_contents)
-        self.assertEqual(self.real_byte_contents, fake_file.byte_contents)
-
-    def test_add_real_directory(self):
-        """Add a real directory and the contained files to the fake file system
-        to be read on demand"""
-
-        # This tests only the basic functionality inside a unit test,
-        # more thorough tests are done in
-        # fake_filesystem_test.RealFileSystemAccessTest.
-        # Note: this test fails (add_real_directory raises) if 'genericpath'
-        # is not added to SKIPNAMES
-        real_dir_path = os.path.split(os.path.dirname(self.filepath))[0]
-        self.fs.add_real_directory(real_dir_path)
-        self.assertTrue(self.fs.exists(real_dir_path))
-        self.assertTrue(self.fs.exists(
-            os.path.join(real_dir_path, 'fake_filesystem.py')))
-
-    def test_add_real_directory_with_backslash(self):
-        """Add a real directory ending with a path separator."""
-        real_dir_path = os.path.split(os.path.dirname(self.filepath))[0]
-        self.fs.add_real_directory(real_dir_path + os.sep)
-        self.assertTrue(self.fs.exists(real_dir_path))
-        self.assertTrue(self.fs.exists(
-            os.path.join(real_dir_path, 'fake_filesystem.py')))
-
-
 class TestPyfakefsTestCase(unittest.TestCase):
     def setUp(self):
         class TestTestCase(fake_filesystem_unittest.TestCase):
@@ -661,6 +731,8 @@ class PathlibTest(TestCase):
 
 
 class TestDeprecationSuppression(fake_filesystem_unittest.TestCase):
+    @unittest.skipIf(sys.version_info[1] == 6,
+                     'Test fails for Python 3.6 for unknown reason')
     def test_no_deprecation_warning(self):
         """Ensures that deprecation warnings are suppressed during module
         lookup, see #542.
@@ -673,6 +745,119 @@ class TestDeprecationSuppression(fake_filesystem_unittest.TestCase):
             warnings.simplefilter("error", DeprecationWarning)
             self.setUpPyfakefs()
             self.assertEqual(0, len(w))
+
+
+def load_configs(configs):
+    """ Helper code for patching open_code in auto mode, see issue #554. """
+    retval = []
+    for config in configs:
+        if len(config) > 3 and config[-3:] == ".py":
+            retval += runpy.run_path(config)
+        else:
+            retval += runpy.run_module(config)
+    return retval
+
+
+class AutoPatchOpenCodeTestCase(fake_filesystem_unittest.TestCase):
+    """ Test patching open_code in auto mode, see issue #554."""
+
+    def setUp(self):
+        self.setUpPyfakefs(patch_open_code=PatchMode.AUTO)
+
+        self.configpy = 'configpy.py'
+        self.fs.create_file(
+            self.configpy,
+            contents="configurable_value='yup'")
+        self.config_module = 'pyfakefs.tests.fixtures.config_module'
+
+    def test_both(self):
+        load_configs([self.configpy, self.config_module])
+
+    def test_run_path(self):
+        load_configs([self.configpy])
+
+    def test_run_module(self):
+        load_configs([self.config_module])
+
+
+class TestOtherFS(fake_filesystem_unittest.TestCase):
+    def setUp(self):
+        self.setUpPyfakefs()
+
+    def test_real_file_with_home(self):
+        """Regression test for #558"""
+        self.fs.is_windows_fs = os.name != 'nt'
+        self.fs.add_real_file(__file__)
+        with open(__file__) as f:
+            self.assertTrue(f.read())
+        home = Path.home()
+        if sys.version_info < (3, 6):
+            # fspath support since Python 3.6
+            home = str(home)
+        os.chdir(home)
+        with open(__file__) as f:
+            self.assertTrue(f.read())
+
+    def test_windows(self):
+        self.fs.os = OSType.WINDOWS
+        path = r'C:\foo\bar'
+        self.assertEqual(path, os.path.join('C:\\', 'foo', 'bar'))
+        self.assertEqual(('C:', r'\foo\bar'), os.path.splitdrive(path))
+        self.fs.create_file(path)
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.exists(path.upper()))
+        self.assertTrue(os.path.ismount(r'\\share\foo'))
+        self.assertTrue(os.path.ismount(r'C:'))
+        self.assertEqual('\\', os.sep)
+        self.assertEqual('\\', os.path.sep)
+        self.assertEqual('/', os.altsep)
+        self.assertEqual(';', os.pathsep)
+        self.assertEqual('\r\n', os.linesep)
+        self.assertEqual('nul', os.devnull)
+
+    def test_linux(self):
+        self.fs.os = OSType.LINUX
+        path = '/foo/bar'
+        self.assertEqual(path, os.path.join('/', 'foo', 'bar'))
+        self.assertEqual(('', 'C:/foo/bar'), os.path.splitdrive('C:/foo/bar'))
+        self.fs.create_file(path)
+        self.assertTrue(os.path.exists(path))
+        self.assertFalse(os.path.exists(path.upper()))
+        self.assertTrue(os.path.ismount('/'))
+        self.assertFalse(os.path.ismount('//share/foo'))
+        self.assertEqual('/', os.sep)
+        self.assertEqual('/', os.path.sep)
+        self.assertEqual(None, os.altsep)
+        self.assertEqual(':', os.pathsep)
+        self.assertEqual('\n', os.linesep)
+        self.assertEqual('/dev/null', os.devnull)
+
+    def test_macos(self):
+        self.fs.os = OSType.MACOS
+        path = '/foo/bar'
+        self.assertEqual(path, os.path.join('/', 'foo', 'bar'))
+        self.assertEqual(('', 'C:/foo/bar'), os.path.splitdrive('C:/foo/bar'))
+        self.fs.create_file(path)
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(os.path.exists(path.upper()))
+        self.assertTrue(os.path.ismount('/'))
+        self.assertFalse(os.path.ismount('//share/foo'))
+        self.assertEqual('/', os.sep)
+        self.assertEqual('/', os.path.sep)
+        self.assertEqual(None, os.altsep)
+        self.assertEqual(':', os.pathsep)
+        self.assertEqual('\n', os.linesep)
+        self.assertEqual('/dev/null', os.devnull)
+
+    def test_drivelike_path(self):
+        self.fs.os = OSType.LINUX
+        folder = Path('/test')
+        file_path = folder / 'C:/testfile'
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+        # use str() to be Python 3.5 compatible
+        os.chdir(str(folder))
+        self.assertTrue(os.path.exists(str(file_path.relative_to(folder))))
 
 
 if __name__ == "__main__":

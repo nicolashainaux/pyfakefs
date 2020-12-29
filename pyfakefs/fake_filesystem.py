@@ -100,8 +100,10 @@ import locale
 import os
 import sys
 import time
+import traceback
 import uuid
 from collections import namedtuple
+from enum import Enum
 from stat import (
     S_IFREG, S_IFDIR, S_ISLNK, S_IFMT, S_ISDIR, S_IFLNK, S_ISREG, S_IFSOCK
 )
@@ -110,7 +112,7 @@ from pyfakefs.deprecator import Deprecator
 from pyfakefs.extra_packages import use_scandir
 from pyfakefs.fake_scandir import scandir, walk
 from pyfakefs.helpers import (
-    FakeStatResult, FileBufferIO, NullFileBufferIO,
+    FakeStatResult, BinaryBufferIO, TextBufferIO,
     is_int_type, is_byte_string, is_unicode_string,
     make_string_path, IS_WIN, to_string, matching_string
 )
@@ -139,7 +141,7 @@ _OPEN_MODE_MAP = {
     'r+': (True, True, True, False, False, False),
     'w+': (False, True, True, True, False, False),
     'a+': (False, True, True, False, True, False),
-    'x':  (False, False, True, False, False, True),
+    'x': (False, False, True, False, False, True),
     'x+': (False, True, True, False, False, True)
 }
 
@@ -154,6 +156,22 @@ else:
 NR_STD_STREAMS = 3
 USER_ID = 1 if IS_WIN else os.getuid()
 GROUP_ID = 1 if IS_WIN else os.getgid()
+
+
+class OSType(Enum):
+    """Defines the real or simulated OS of the underlying file system."""
+    LINUX = "linux"
+    MACOS = "macos"
+    WINDOWS = "windows"
+
+
+class PatchMode(Enum):
+    """Defines if patching shall be on, off, or in automatic mode.
+    Currently only used for `patch_open_code` option.
+    """
+    OFF = 1
+    AUTO = 2
+    ON = 3
 
 
 def set_uid(uid):
@@ -384,11 +402,11 @@ class FakeFile:
         changed = self._byte_contents != contents
         st_size = len(contents)
 
-        if self._byte_contents:
-            self.size = 0
         current_size = self.st_size or 0
         self.filesystem.change_disk_usage(
             st_size - current_size, self.name, self.st_dev)
+        if self._byte_contents:
+            self.size = 0
         self._byte_contents = contents
         self.st_size = st_size
         self.epoch += 1
@@ -536,7 +554,7 @@ class FakeFile:
 
 class FakeNullFile(FakeFile):
     def __init__(self, filesystem):
-        devnull = '/dev/nul' if filesystem.is_windows_fs else '/dev/nul'
+        devnull = 'nul' if filesystem.is_windows_fs else '/dev/null'
         super(FakeNullFile, self).__init__(
             devnull, filesystem=filesystem, contents=b'')
 
@@ -887,10 +905,31 @@ class FakeFilesystem:
         self.add_mount_point(self.root.name, total_size)
         self._add_standard_streams()
         self.dev_null = FakeNullFile(self)
+        # set from outside if needed
+        self.patch_open_code = PatchMode.OFF
 
     @property
     def is_linux(self):
         return not self.is_windows_fs and not self.is_macos
+
+    @property
+    def os(self):
+        """Return the real or simulated type of operating system."""
+        return (OSType.WINDOWS if self.is_windows_fs else
+                OSType.MACOS if self.is_macos else OSType.LINUX)
+
+    @os.setter
+    def os(self, value):
+        """Set the simulated type of operating system underlying the fake
+        file system."""
+        self.is_windows_fs = value == OSType.WINDOWS
+        self.is_macos = value == OSType.MACOS
+        self.is_case_sensitive = value == OSType.LINUX
+        self.path_separator = '\\' if value == OSType.WINDOWS else '/'
+        self.alternative_path_separator = ('/' if value == OSType.WINDOWS
+                                           else None)
+        self.reset()
+        FakePathModule.reset(self)
 
     def reset(self, total_size=None):
         """Remove all file system contents and reset the root."""
@@ -904,6 +943,8 @@ class FakeFilesystem:
         self.mount_points = {}
         self.add_mount_point(self.root.name, total_size)
         self._add_standard_streams()
+        from pyfakefs import fake_pathlib
+        fake_pathlib.init_module(self)
 
     def pause(self):
         """Pause the patching of the file system modules until `resume` is
@@ -933,6 +974,11 @@ class FakeFilesystem:
             raise RuntimeError('resume() can only be called from a fake file '
                                'system object created by a Patcher object')
         self.patcher.resume()
+
+    def clear_cache(self):
+        """Clear the cache of non-patched modules."""
+        if self.patcher:
+            self.patcher.clear_cache()
 
     def line_separator(self):
         return '\r\n' if self.is_windows_fs else '\n'
@@ -1406,8 +1452,8 @@ class FakeFilesystem:
                     path_components[len(normalized_components):])
             sep = self._path_separator(path)
             normalized_path = sep.join(normalized_components)
-            if (self._starts_with_sep(path) and not
-                    self._starts_with_sep(normalized_path)):
+            if (self._starts_with_sep(path)
+                    and not self._starts_with_sep(normalized_path)):
                 normalized_path = sep + normalized_path
             return normalized_path
 
@@ -1655,8 +1701,20 @@ class FakeFilesystem:
             the path starts with a drive letter.
         """
         colon = matching_string(file_path, ':')
-        return (self.is_windows_fs and len(file_path) >= 2 and
-                file_path[:1].isalpha and (file_path[1:2]) == colon)
+        if (len(file_path) >= 2 and
+                file_path[:1].isalpha and file_path[1:2] == colon):
+            if self.is_windows_fs:
+                return True
+            if os.name == 'nt':
+                # special case if we are emulating Posix under Windows
+                # check if the path exists because it has been mapped in
+                # this is not foolproof, but handles most cases
+                try:
+                    self.get_object_from_normpath(file_path)
+                    return True
+                except OSError:
+                    return False
+        return False
 
     def _starts_with_root_path(self, file_path):
         root_name = matching_string(file_path, self.root.name)
@@ -3071,6 +3129,12 @@ class FakePathModule:
     """
     _OS_PATH_COPY = _copy_module(os.path)
 
+    devnull = None
+    sep = None
+    altsep = None
+    linesep = None
+    pathsep = None
+
     @staticmethod
     def dir():
         """Return the list of patched function names. Used for patching
@@ -3092,8 +3156,15 @@ class FakePathModule:
         self.filesystem = filesystem
         self._os_path = self._OS_PATH_COPY
         self._os_path.os = self.os = os_module
-        self.sep = self.filesystem.path_separator
-        self.altsep = self.filesystem.alternative_path_separator
+        self.reset(filesystem)
+
+    @classmethod
+    def reset(cls, filesystem):
+        cls.sep = filesystem.path_separator
+        cls.altsep = filesystem.alternative_path_separator
+        cls.linesep = filesystem.line_separator()
+        cls.devnull = 'nul' if filesystem.is_windows_fs else '/dev/null'
+        cls.pathsep = ';' if filesystem.is_windows_fs else ':'
 
     def exists(self, path):
         """Determine whether the file object exists within the fake filesystem.
@@ -3430,14 +3501,12 @@ class FakeOsModule:
     my_os_module = fake_filesystem.FakeOsModule(filesystem)
     """
 
-    devnull = None
-
     @staticmethod
     def dir():
         """Return the list of patched function names. Used for patching
         functions imported from the module.
         """
-        dir = [
+        _dir = [
             'access', 'chdir', 'chmod', 'chown', 'close', 'fstat', 'fsync',
             'getcwd', 'lchmod', 'link', 'listdir', 'lstat', 'makedirs',
             'mkdir', 'mknod', 'open', 'read', 'readlink', 'remove',
@@ -3445,13 +3514,13 @@ class FakeOsModule:
             'unlink', 'utime', 'walk', 'write', 'getcwdb', 'replace'
         ]
         if sys.platform.startswith('linux'):
-            dir += [
+            _dir += [
                 'fdatasync', 'getxattr', 'listxattr',
                 'removexattr', 'setxattr'
             ]
         if use_scandir:
-            dir += ['scandir']
-        return dir
+            _dir += ['scandir']
+        return _dir
 
     def __init__(self, filesystem):
         """Also exposes self.path (to fake os.path).
@@ -3460,13 +3529,28 @@ class FakeOsModule:
             filesystem: FakeFilesystem used to provide file system information
         """
         self.filesystem = filesystem
-        self.sep = filesystem.path_separator
-        self.altsep = filesystem.alternative_path_separator
-        self.linesep = filesystem.line_separator()
         self._os_module = os
         self.path = FakePathModule(self.filesystem, self)
-        self.__class__.devnull = ('/dev/nul' if filesystem.is_windows_fs
-                                  else '/dev/nul')
+
+    @property
+    def devnull(self):
+        return self.path.devnull
+
+    @property
+    def sep(self):
+        return self.path.sep
+
+    @property
+    def altsep(self):
+        return self.path.altsep
+
+    @property
+    def linesep(self):
+        return self.path.linesep
+
+    @property
+    def pathsep(self):
+        return self.path.pathsep
 
     def fdopen(self, fd, *args, **kwargs):
         """Redirector to open() builtin function.
@@ -3703,8 +3787,13 @@ class FakeOsModule:
             OSError: if user lacks permission to enter the argument directory
                 or if the target is not a directory.
         """
-        path = self.filesystem.resolve_path(
-            path, allow_fd=True)
+        try:
+            path = self.filesystem.resolve_path(
+                path, allow_fd=True)
+        except OSError as exc:
+            if self.filesystem.is_macos and exc.errno == errno.EBADF:
+                raise OSError(errno.ENOTDIR, "Not a directory: " + str(path))
+            raise
         self.filesystem.confirmdir(path)
         directory = self.filesystem.resolve(path)
         # A full implementation would check permissions all the way
@@ -4462,7 +4551,10 @@ class FakeIoModule:
         """Return the list of patched function names. Used for patching
         functions imported from the module.
         """
-        return 'open',
+        _dir = ['open']
+        if sys.version_info >= (3, 8):
+            _dir.append('open_code')
+        return _dir
 
     def __init__(self, filesystem):
         """
@@ -4470,6 +4562,7 @@ class FakeIoModule:
             filesystem: FakeFilesystem used to provide file system information.
         """
         self.filesystem = filesystem
+        self.skip_names = []
         self._io_module = io
 
     def open(self, file, mode='r', buffering=-1, encoding=None,
@@ -4477,9 +4570,37 @@ class FakeIoModule:
         """Redirect the call to FakeFileOpen.
         See FakeFileOpen.call() for description.
         """
+        # workaround for built-in open called from skipped modules (see #552)
+        # as open is not imported explicitly, we cannot patch it for
+        # specific modules; instead we check if the caller is a skipped
+        # module (should work in most cases)
+        stack = traceback.extract_stack(limit=2)
+        module_name = os.path.splitext(stack[0].filename)[0]
+        module_name = module_name.replace(os.sep, '.')
+        if any([module_name == sn or module_name.endswith('.' + sn)
+                for sn in self.skip_names]):
+            return io.open(file, mode, buffering, encoding, errors,
+                           newline, closefd, opener)
         fake_open = FakeFileOpen(self.filesystem)
         return fake_open(file, mode, buffering, encoding, errors,
                          newline, closefd, opener)
+
+    if sys.version_info >= (3, 8):
+        def open_code(self, path):
+            """Redirect the call to open. Note that the behavior of the real
+            function may be overridden by an earlier call to the
+            PyFile_SetOpenCodeHook(). This behavior is not reproduced here.
+            """
+            if not isinstance(path, str):
+                raise TypeError(
+                    "open_code() argument 'path' must be str, not int")
+            patch_mode = self.filesystem.patch_open_code
+            if (patch_mode == PatchMode.AUTO and self.filesystem.exists(path)
+                    or patch_mode == PatchMode.ON):
+                return self.open(path, mode='rb')
+            # mostly this is used for compiled code -
+            # don't patch these, as the files are probably in the real fs
+            return self._io_module.open_code(path)
 
     def __getattr__(self, name):
         """Forwards any unfaked calls to the standard io module."""
@@ -4493,10 +4614,10 @@ class FakeFileWrapper:
     the FakeFile object on close() or flush().
     """
 
-    def __init__(self, file_object, file_path, update=False, read=False,
-                 append=False, delete_on_close=False, filesystem=None,
-                 newline=None, binary=True, closefd=True, encoding=None,
-                 errors=None, raw_io=False, is_stream=False):
+    def __init__(self, file_object, file_path, update, read,
+                 append, delete_on_close, filesystem,
+                 newline, binary, closefd, encoding,
+                 errors, buffering, raw_io, is_stream=False):
         self.file_object = file_object
         self.file_path = file_path
         self._append = append
@@ -4508,14 +4629,20 @@ class FakeFileWrapper:
         self._binary = binary
         self.is_stream = is_stream
         self._changed = False
+        self._buffer_size = buffering
+        if self._buffer_size == 0 and not binary:
+            raise ValueError("can't have unbuffered text I/O")
+        # buffer_size is ignored in text mode
+        elif self._buffer_size == -1 or not binary:
+            self._buffer_size = io.DEFAULT_BUFFER_SIZE
+        self._use_line_buffer = not binary and buffering == 1
+
         contents = file_object.byte_contents
         self._encoding = encoding or locale.getpreferredencoding(False)
         errors = errors or 'strict'
-        buffer_class = (NullFileBufferIO if file_object == filesystem.dev_null
-                        else FileBufferIO)
-        self._io = buffer_class(contents, linesep=filesystem.line_separator(),
-                                binary=binary, encoding=encoding,
-                                newline=newline, errors=errors)
+        self._io = (BinaryBufferIO(contents) if binary
+                    else TextBufferIO(contents, encoding=encoding,
+                                      newline=newline, errors=errors))
 
         self._read_whence = 0
         self._read_seek = 0
@@ -4583,6 +4710,18 @@ class FakeFileWrapper:
         """Simulate the `closed` attribute on file."""
         return not self._is_open()
 
+    def _try_flush(self, old_pos):
+        """Try to flush and reset the position if it fails."""
+        flush_pos = self._flush_pos
+        try:
+            self.flush()
+        except OSError:
+            # write failed - reset to previous position
+            self._io.seek(old_pos)
+            self._io.truncate()
+            self._flush_pos = flush_pos
+            raise
+
     def flush(self):
         """Flush file contents to 'disk'."""
         self._check_open_file()
@@ -4590,14 +4729,12 @@ class FakeFileWrapper:
             contents = self._io.getvalue()
             if self._append:
                 self._sync_io()
-                old_contents = (self.file_object.byte_contents
-                                if is_byte_string(contents) else
-                                self.file_object.contents)
+                old_contents = self.file_object.byte_contents
                 contents = old_contents + contents[self._flush_pos:]
                 self._set_stream_contents(contents)
-                self.update_flush_pos()
             else:
                 self._io.flush()
+            self.update_flush_pos()
             if self.file_object.set_contents(contents, self._encoding):
                 if self._filesystem.is_windows_fs:
                     self._changed = True
@@ -4658,11 +4795,7 @@ class FakeFileWrapper:
         if self._file_epoch == self.file_object.epoch:
             return
 
-        if self._io.binary:
-            contents = self.file_object.byte_contents
-        else:
-            contents = self.file_object.contents
-
+        contents = self.file_object.byte_contents
         self._set_stream_contents(contents)
         self._file_epoch = self.file_object.epoch
 
@@ -4670,8 +4803,6 @@ class FakeFileWrapper:
         whence = self._io.tell()
         self._io.seek(0)
         self._io.truncate()
-        if not self._io.binary and is_byte_string(contents):
-            contents = contents.decode(self._encoding)
         self._io.putvalue(contents)
         if not self._append:
             self._io.seek(whence)
@@ -4712,7 +4843,7 @@ class FakeFileWrapper:
 
         return read_wrapper
 
-    def _other_wrapper(self, name, writing):
+    def _other_wrapper(self, name):
         """Wrap a stream attribute in an other_wrapper.
 
         Args:
@@ -4742,9 +4873,60 @@ class FakeFileWrapper:
             if write_seek != self._io.tell():
                 self._read_seek = self._io.tell()
                 self._read_whence = 0
+
             return ret_value
 
         return other_wrapper
+
+    def _write_wrapper(self, name):
+        """Wrap a stream attribute in a write_wrapper.
+
+        Args:
+          name: the name of the stream attribute to wrap.
+
+        Returns:
+          write_wrapper which is described below.
+        """
+        io_attr = getattr(self._io, name)
+
+        def write_wrapper(*args, **kwargs):
+            """Wrap all other calls to the stream Object.
+
+            We do this to track changes to the write pointer.  Anything that
+            moves the write pointer in a file open for appending should move
+            the read pointer as well.
+
+            Args:
+                *args: Pass through args.
+                **kwargs: Pass through kwargs.
+
+            Returns:
+                Wrapped stream object method.
+            """
+            old_pos = self._io.tell()
+            ret_value = io_attr(*args, **kwargs)
+            new_pos = self._io.tell()
+
+            # if the buffer size is exceeded, we flush
+            use_line_buf = self._use_line_buffer and '\n' in args[0]
+            if new_pos - self._flush_pos > self._buffer_size or use_line_buf:
+                flush_all = (new_pos - old_pos > self._buffer_size or
+                             use_line_buf)
+                # if the current write does not exceed the buffer size,
+                # we revert to the previous position and flush that,
+                # otherwise we flush all
+                if not flush_all:
+                    self._io.seek(old_pos)
+                    self._io.truncate()
+                self._try_flush(old_pos)
+                if not flush_all:
+                    ret_value = io_attr(*args, **kwargs)
+            if self._append:
+                self._read_seek = self._io.tell()
+                self._read_whence = 0
+            return ret_value
+
+        return write_wrapper
 
     def _adapt_size_for_related_files(self, size):
         for open_files in self._filesystem.open_files[3:]:
@@ -4774,7 +4956,7 @@ class FakeFileWrapper:
                 buffer_size = len(self._io.getvalue())
                 if buffer_size < size:
                     self._io.seek(buffer_size)
-                    self._io.write('\0' * (size - buffer_size))
+                    self._io.putvalue(b'\0' * (size - buffer_size))
                     self.file_object.set_contents(
                         self._io.getvalue(), self._encoding)
                     self._flush_pos = size
@@ -4815,8 +4997,10 @@ class FakeFileWrapper:
         if self._append:
             if reading:
                 return self._read_wrappers(name)
-            else:
-                return self._other_wrapper(name, writing)
+            elif not writing:
+                return self._other_wrapper(name)
+        if writing:
+            return self._write_wrapper(name)
 
         return getattr(self._io, name)
 
@@ -4919,6 +5103,14 @@ class FakePipeWrapper:
         self.file_object = None
         self.filedes = None
 
+    def __enter__(self):
+        """To support usage of this fake pipe with the 'with' statement."""
+        return self
+
+    def __exit__(self, type, value, traceback):
+        """To support usage of this fake pipe with the 'with' statement."""
+        self.close()
+
     def get_object(self):
         return self.file_object
 
@@ -4929,6 +5121,10 @@ class FakePipeWrapper:
     def read(self, numBytes):
         """Read from the real pipe."""
         return os.read(self.fd, numBytes)
+
+    def flush(self):
+        """Flush the real pipe?"""
+        pass
 
     def write(self, contents):
         """Write to the real pipe."""
@@ -4975,8 +5171,10 @@ class FakeFileOpen:
         Args:
             file_: Path to target file or a file descriptor.
             mode: Additional file modes (all modes in `open()` are supported).
-            buffering: ignored. (Used for signature compliance with
-                __builtin__.open)
+            buffering: the buffer size used for writing. Data will only be
+                flushed if buffer size is exceeded. The default (-1) uses a
+                system specific default buffer size. Text line mode (e.g.
+                buffering=1 in text mode) is not supported.
             encoding: The encoding used to encode unicode strings / decode
                 bytes.
             errors: (str) Defines how encoding errors are handled.
@@ -5004,6 +5202,12 @@ class FakeFileOpen:
 
         file_object, file_path, filedes, real_path = self._handle_file_arg(
             file_)
+        if file_object is None and file_path is None:
+            wrapper = FakePipeWrapper(self.filesystem, filedes)
+            file_des = self.filesystem._add_open_file(wrapper)
+            wrapper.filedes = file_des
+            return wrapper
+
         if not filedes:
             closefd = True
 
@@ -5043,6 +5247,7 @@ class FakeFileOpen:
                                    closefd=closefd,
                                    encoding=encoding,
                                    errors=errors,
+                                   buffering=buffering,
                                    raw_io=self.raw_io)
         if filedes is not None:
             fakefile.filedes = filedes
@@ -5089,6 +5294,8 @@ class FakeFileOpen:
             # opening a file descriptor
             filedes = file_
             wrapper = self.filesystem.get_open_file(filedes)
+            if isinstance(wrapper, FakePipeWrapper):
+                return None, None, filedes, None
             self._delete_on_close = wrapper.delete_on_close
             file_object = self.filesystem.get_open_file(filedes).get_object()
             file_path = file_object.name
