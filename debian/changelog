@@ -1,8 +1,15 @@
+python3-pyfakefs (4.3.3-0ubuntu2) focal; urgency=low
+
+  * Fixed 4.3.3 release (it includes a new feature and a necessary bug fix that were published right after 4.3.3).
+
+ -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Wed, 13 Jan 2021 17:34:00 +0100
+
+
 python3-pyfakefs (4.3.3-0ubuntu1) focal; urgency=low
 
-  * Update to 4.3.3 release. Actually, this is a 4.3.4dev version because it includes a new feature and a necessary bug fix that were published after 4.3.3.
+  * Update to 4.3.3 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Mon, 11 Jan 2021 19:34:49 +0100
+ -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Tue, 29 Dec 2020 07:18:41 +0100
 
 
 python3-pyfakefs (4.1.0-0ubuntu1) focal; urgency=low
