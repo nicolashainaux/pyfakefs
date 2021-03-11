@@ -2,16 +2,25 @@
 The released versions correspond to PyPi releases.
 
 ## Version 4.4.0 (as yet unreleased)
-
+  
 #### New Features
   * added support for `pathlib.Path.link_to` (new in Python 3.8) 
     (see [#580](../../issues/580))
+  * added support for `pathlib.Path.readlink` (new in Python 3.9) 
+    (see [#584](../../issues/584))
   * added `FakeFilesystem.create_link` convenience method which creates
     intermittent directories (see [#580](../../issues/580))
     
 ### Fixes
   * fixed handling of pipe descriptors in the fake filesystem 
     (see [#581](../../issues/581))
+  * added non-functional argument `effective_ids` to `os.access`
+    (see [#585](../../issues/585))
+  * correctly handle `os.file` for unreadable files
+    (see [#588](../../issues/588))
+
+### Infrastructure
+  * added automatic documentation build and check-in
 
 ## [Version 4.3.3](https://pypi.python.org/pypi/pyfakefs/4.3.3) (2020-12-20)
 

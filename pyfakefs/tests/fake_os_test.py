@@ -547,6 +547,11 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.create_file(file_path)
         self.assertFalse(self.os.path.isfile(file_path + self.os.sep))
 
+    def test_isfile_not_readable_file(self):
+        file_path = self.make_path('foo')
+        self.create_file(file_path, perm=0)
+        self.assertTrue(self.os.path.isfile(file_path))
+
     def check_stat_with_trailing_separator(self, error_nr):
         # regression test for #376
         file_path = self.make_path('foo')
@@ -1895,6 +1900,12 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertFalse(self.os.access(path, self.os.X_OK))
         self.assertFalse(self.os.access(path, self.rwx))
         self.assertFalse(self.os.access(path, self.rw))
+
+    def test_effective_ids_not_supported_under_windows(self):
+        self.check_windows_only()
+        path = self.make_path('foo', 'bar')
+        with self.assertRaises(NotImplementedError):
+            self.os.access(path, self.os.F_OK, effective_ids=True)
 
     def test_chmod(self):
         # set up
