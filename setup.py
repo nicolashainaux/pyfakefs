@@ -16,13 +16,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+from typing import List
 
 from setuptools import setup, find_packages
 
 from pyfakefs import __version__
 
 NAME = 'pyfakefs'
-REQUIRES = []
+REQUIRES: List[str] = []
 DESCRIPTION = ('pyfakefs implements a fake file system that mocks '
                'the Python file system modules.')
 
@@ -37,11 +38,12 @@ CLASSIFIERS = [
     'Environment :: Console',
     'Intended Audience :: Developers',
     'License :: OSI Approved :: Apache Software License',
-    'Programming Language :: Python :: 3.5',
+    "Programming Language :: Python :: 3",
     'Programming Language :: Python :: 3.6',
     'Programming Language :: Python :: 3.7',
     'Programming Language :: Python :: 3.8',
     'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
     'Programming Language :: Python :: Implementation :: CPython',
     'Programming Language :: Python :: Implementation :: PyPy',
     'Operating System :: POSIX',

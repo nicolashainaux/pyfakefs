@@ -1,12 +1,42 @@
 # pyfakefs Release Notes
 The released versions correspond to PyPi releases.
 
-## Version 4.5.0 (as yet unreleased)
+## Version 4.6.0 (as yet unreleased)
+
+## [Version 4.5.0](https://pypi.python.org/pypi/pyfakefs/4.5.0) (2021-06-04)
+Adds some support for Python 3.10 and basic type checking.
+
+### New Features
+  * added support for some Python 3.10 features:
+    * new method `pathlib.Path.hardlink_to` 
+    * new `newline` argument in `pathlib.Path.write_text`
+    * new `follow_symlinks` argument in `pathlib.Path.stat` and
+     `pathlib.Path.chmod`
+    * new 'strict' argument in `os.path.realpath`  
+
+### Changes
+  * Python 3.5 has reached its end of life in September 2020 and is no longer 
+    supported
+  * `pathlib2` is still supported, but considered to have the same
+    functionality as `pathlib` and is no longer tested separately;
+    the previous behavior broke newer `pathlib` features if `pathlib2`
+    was installed (see [#592](../../issues/592))
+    
+### Fixes
+  * correctly handle byte paths in `os.path.exists`
+    (see [#595](../../issues/595))
+  * Update `fake_pathlib` to support changes coming in Python 3.10
+    ([see](https://github.com/python/cpython/pull/19342)
+  * correctly handle UNC paths in `os.path.split` and in directory path 
+    evaluation (see [#606](../../issues/606))
+
+### Infrastructure
+  * added mypy checks in CI (see [#599](../../issues/599))
 
 ## [Version 4.4.0](https://pypi.python.org/pypi/pyfakefs/4.4.0) (2021-02-24)
 Adds better support for Python 3.8 / 3.9.
   
-#### New Features
+### New Features
   * added support for `pathlib.Path.link_to` (new in Python 3.8) 
     (see [#580](../../issues/580))
   * added support for `pathlib.Path.readlink` (new in Python 3.9) 
@@ -52,7 +82,7 @@ possibility to disable it.
 ### Changes
 * Added caching of patched modules to avoid lookup overhead  
 * Added `use_cache` option and `clear_cache` method to be able
-  to deal with unwanted side-effects of the newly introduced caching
+  to deal with unwanted side effects of the newly introduced caching
 
 ### Infrastructure
 * Moved CI builds to GitHub Actions for performance reasons

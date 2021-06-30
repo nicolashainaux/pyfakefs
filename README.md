@@ -43,7 +43,7 @@ using convenience functions.
 
 
 ## Compatibility
-pyfakefs works with CPython 3.5 and above, on Linux, Windows and OSX 
+pyfakefs works with CPython 3.6 and above, on Linux, Windows and OSX 
 (MacOS), and with PyPy3.
 
 pyfakefs works with [PyTest](http://doc.pytest.org) version 2.8.6 or above.
@@ -60,7 +60,7 @@ For example, pyfakefs will not work with [`lxml`](http://lxml.de/).  In this cas
 ### Continuous integration
 
 pyfakefs is currently automatically tested on Linux, MacOS and Windows, with
-Python 3.6 to 3.9, and with PyPy3 on Linux, using
+Python 3.6 to 3.10, and with PyPy3 on Linux, using
 [GitHub Actions](https://github.com/jmcgeheeiv/pyfakefs/actions).
 
 ### Running pyfakefs unit tests

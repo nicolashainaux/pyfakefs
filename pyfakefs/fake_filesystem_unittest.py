@@ -43,6 +43,8 @@ import shutil
 import sys
 import tempfile
 import tokenize
+from types import ModuleType
+from typing import Any, Callable, Dict, List, Set, Tuple
 import unittest
 import warnings
 
@@ -56,7 +58,7 @@ from pyfakefs.patched_packages import (
 try:
     from importlib.machinery import ModuleSpec
 except ImportError:
-    ModuleSpec = object
+    ModuleSpec = object  # type: ignore [assignment, misc]
 
 from importlib import reload
 
@@ -64,7 +66,7 @@ from pyfakefs import fake_filesystem
 from pyfakefs import fake_filesystem_shutil
 from pyfakefs import fake_pathlib
 from pyfakefs import mox3_stubout
-from pyfakefs.extra_packages import pathlib, pathlib2, use_scandir
+from pyfakefs.extra_packages import pathlib2, use_scandir
 
 if use_scandir:
     from pyfakefs import fake_scandir
@@ -366,11 +368,11 @@ class Patcher:
     }
     # caches all modules that do not have file system modules or function
     # to speed up _find_modules
-    CACHED_MODULES = set()
-    FS_MODULES = {}
-    FS_FUNCTIONS = {}
-    FS_DEFARGS = []
-    SKIPPED_FS_MODULES = {}
+    CACHED_MODULES: Set[ModuleType] = set()
+    FS_MODULES: Dict[str, Set[ModuleType]] = {}
+    FS_FUNCTIONS: Dict[Tuple[str, str, str], Set[ModuleType]] = {}
+    FS_DEFARGS: List[Tuple[Callable[..., Any], int, Callable[..., Any]]] = []
+    SKIPPED_FS_MODULES: Dict[str, Set[ModuleType]] = {}
 
     assert None in SKIPMODULES, ("sys.modules contains 'None' values;"
                                  " must skip them.")
@@ -380,8 +382,8 @@ class Patcher:
     SKIPNAMES = {'os', 'path', 'io', 'genericpath', OS_MODULE, PATH_MODULE}
 
     # hold values from last call - if changed, the cache has to be invalidated
-    PATCHED_MODULE_NAMES = {}
-    ADDITIONAL_SKIP_NAMES = set()
+    PATCHED_MODULE_NAMES: Set[str] = set()
+    ADDITIONAL_SKIP_NAMES: Set[str] = set()
     PATCH_DEFAULT_ARGS = False
 
     def __init__(self, additional_skip_names=None,
@@ -504,6 +506,7 @@ class Patcher:
             'os': fake_filesystem.FakeOsModule,
             'shutil': fake_filesystem_shutil.FakeShutilModule,
             'io': fake_filesystem.FakeIoModule,
+            'pathlib': fake_pathlib.FakePathlibModule
         }
         if IS_PYPY:
             # in PyPy io.open, the module is referenced as _io
@@ -512,13 +515,9 @@ class Patcher:
         # class modules maps class names against a list of modules they can
         # be contained in - this allows for alternative modules like
         # `pathlib` and `pathlib2`
-        self._class_modules['Path'] = []
-        if pathlib:
-            self._fake_module_classes[
-                'pathlib'] = fake_pathlib.FakePathlibModule
-            self._class_modules['Path'].append('pathlib')
-            self._unfaked_module_classes[
-                'pathlib'] = fake_pathlib.RealPathlibModule
+        self._class_modules['Path'] = ['pathlib']
+        self._unfaked_module_classes[
+            'pathlib'] = fake_pathlib.RealPathlibModule
         if pathlib2:
             self._fake_module_classes[
                 'pathlib2'] = fake_pathlib.FakePathlibModule
@@ -746,7 +745,7 @@ class Patcher:
             self._dyn_patcher = DynamicPatcher(self)
             sys.meta_path.insert(0, self._dyn_patcher)
             for module in self.modules_to_reload:
-                if module.__name__ in sys.modules:
+                if sys.modules.get(module.__name__) is module:
                     reload(module)
 
     def patch_functions(self):

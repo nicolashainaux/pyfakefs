@@ -32,12 +32,14 @@ import errno
 import fnmatch
 import functools
 import os
+import pathlib
+from pathlib import PurePath
 import re
 import sys
 from urllib.parse import quote_from_bytes as urlquote_from_bytes
 
 from pyfakefs import fake_scandir
-from pyfakefs.extra_packages import use_scandir, pathlib, pathlib2
+from pyfakefs.extra_packages import use_scandir
 from pyfakefs.fake_filesystem import FakeFileOpen, FakeFilesystem
 
 
@@ -52,8 +54,8 @@ def init_module(filesystem):
 
 def _wrap_strfunc(strfunc):
     @functools.wraps(strfunc)
-    def _wrapped(pathobj, *args):
-        return strfunc(pathobj.filesystem, str(pathobj), *args)
+    def _wrapped(pathobj, *args, **kwargs):
+        return strfunc(pathobj.filesystem, str(pathobj), *args, **kwargs)
 
     return staticmethod(_wrapped)
 
@@ -77,12 +79,12 @@ def _wrap_binary_strfunc_reverse(strfunc):
 
 
 try:
-    accessor = pathlib._Accessor
+    accessor = pathlib._Accessor  # type: ignore [attr-defined]
 except AttributeError:
     accessor = object
 
 
-class _FakeAccessor(accessor):
+class _FakeAccessor(accessor):  # type: ignore [valid-type, misc]
     """Accessor which forwards some of the functions to FakeFilesystem methods.
     """
 
@@ -93,18 +95,30 @@ class _FakeAccessor(accessor):
 
     listdir = _wrap_strfunc(FakeFilesystem.listdir)
 
-    chmod = _wrap_strfunc(FakeFilesystem.chmod)
-
     if use_scandir:
         scandir = _wrap_strfunc(fake_scandir.scandir)
+
+    chmod = _wrap_strfunc(FakeFilesystem.chmod)
 
     if hasattr(os, "lchmod"):
         lchmod = _wrap_strfunc(lambda fs, path, mode: FakeFilesystem.chmod(
             fs, path, mode, follow_symlinks=False))
     else:
-        def lchmod(self, pathobj, mode):
+        def lchmod(self, pathobj,  *args, **kwargs):
             """Raises not implemented for Windows systems."""
             raise NotImplementedError("lchmod() not available on this system")
+
+        def chmod(self, pathobj, *args, **kwargs):
+            if "follow_symlinks" in kwargs:
+                if sys.version_info < (3, 10):
+                    raise TypeError("chmod() got an unexpected keyword "
+                                    "argument 'follow_synlinks'")
+                if (not kwargs["follow_symlinks"] and
+                        os.chmod not in os.supports_follow_symlinks):
+                    raise NotImplementedError(
+                        "`follow_symlinks` for chmod() is not available "
+                        "on this system")
+            return pathobj.filesystem.chmod(str(pathobj), *args, **kwargs)
 
     mkdir = _wrap_strfunc(FakeFilesystem.makedir)
 
@@ -123,23 +137,31 @@ class _FakeAccessor(accessor):
         FakeFilesystem.create_symlink(fs, file_path, link_target,
                                       create_missing_dirs=False))
 
-    if sys.version_info >= (3, 8):
+    if (3, 8) <= sys.version_info:
         link_to = _wrap_binary_strfunc(
             lambda fs, file_path, link_target:
             FakeFilesystem.link(fs, file_path, link_target))
 
-    if sys.version_info >= (3, 9):
-        readlink = _wrap_strfunc(FakeFilesystem.readlink)
+    if sys.version_info >= (3, 10):
+        link = _wrap_binary_strfunc(
+            lambda fs, file_path, link_target:
+            FakeFilesystem.link(fs, file_path, link_target))
+
+        # this will use the fake filesystem because os is patched
+        def getcwd(self):
+            return os.getcwd()
+
+    readlink = _wrap_strfunc(FakeFilesystem.readlink)
 
     utime = _wrap_strfunc(FakeFilesystem.utime)
 
 
 _fake_accessor = _FakeAccessor()
 
-flavour = pathlib._Flavour
+flavour = pathlib._Flavour  # type: ignore [attr-defined]
 
 
-class _FakeFlavour(flavour):
+class _FakeFlavour(flavour):  # type: ignore [valid-type, misc]
     """Fake Flavour implementation used by PurePath and _Flavour"""
 
     filesystem = None
@@ -460,18 +482,41 @@ class FakePath(pathlib.Path):
             cls = (FakePathlibModule.WindowsPath
                    if cls.filesystem.is_windows_fs
                    else FakePathlibModule.PosixPath)
-        self = cls._from_parts(args, init=True)
+        self = cls._from_parts(args)
         return self
 
-    def _path(self):
-        """Returns the underlying path string as used by the fake filesystem.
-        """
-        return str(self)
+    @classmethod
+    def _from_parts(cls, args, init=False):  # pylint: disable=unused-argument
+        # Overwritten to call _init to set the fake accessor,
+        # which is not done since Python 3.10
+        self = object.__new__(cls)
+        self._init()
+        drv, root, parts = self._parse_args(args)
+        self._drv = drv
+        self._root = root
+        self._parts = parts
+        return self
+
+    @classmethod
+    def _from_parsed_parts(cls, drv, root, parts):
+        # Overwritten to call _init to set the fake accessor,
+        # which is not done since Python 3.10
+        self = object.__new__(cls)
+        self._init()
+        self._drv = drv
+        self._root = root
+        self._parts = parts
+        return self
 
     def _init(self, template=None):
         """Initializer called from base class."""
         self._accessor = _fake_accessor
         self._closed = False
+
+    def _path(self):
+        """Returns the underlying path string as used by the fake filesystem.
+        """
+        return str(self)
 
     @classmethod
     def cwd(cls):
@@ -493,7 +538,7 @@ class FakePath(pathlib.Path):
         Raises:
             OSError: if the path doesn't exist (strict=True or Python < 3.6)
         """
-        if sys.version_info >= (3, 6) or pathlib2:
+        if sys.version_info >= (3, 6):
             if strict is None:
                 strict = False
         else:
@@ -555,7 +600,7 @@ class FakePath(pathlib.Path):
         with FakeFileOpen(self.filesystem)(self._path(), mode='wb') as f:
             return f.write(view)
 
-    def write_text(self, data, encoding=None, errors=None):
+    def write_text(self, data, encoding=None, errors=None, newline=None):
         """Open the fake file in text mode, write to it, and close
         the file.
 
@@ -563,7 +608,9 @@ class FakePath(pathlib.Path):
             data: the string to be written
             encoding: the encoding used for the string; if not given, the
                 default locale encoding is used
-            errors: ignored
+            errors: (str) Defines how encoding errors are handled.
+            newline: Controls universal newlines, passed to stream object.
+                New in Python 3.10.
         Raises:
             TypeError: if data is not of type 'str'.
             OSError: if the target object is a directory, the path is
@@ -572,10 +619,14 @@ class FakePath(pathlib.Path):
         if not isinstance(data, str):
             raise TypeError('data must be str, not %s' %
                             data.__class__.__name__)
+        if newline is not None and sys.version_info < (3, 10):
+            raise TypeError("write_text() got an unexpected "
+                            "keyword argument 'newline'")
         with FakeFileOpen(self.filesystem)(self._path(),
                                            mode='w',
                                            encoding=encoding,
-                                           errors=errors) as f:
+                                           errors=errors,
+                                           newline=newline) as f:
             return f.write(data)
 
     @classmethod
@@ -655,8 +706,6 @@ class FakePathlibModule:
     `fake_pathlib_module = fake_filesystem.FakePathlibModule(filesystem)`
     """
 
-    PurePath = pathlib.PurePath
-
     def __init__(self, filesystem):
         """
         Initializes the module with the given filesystem.
@@ -721,7 +770,7 @@ class RealPath(pathlib.Path):
         if cls is RealPathlibModule.Path:
             cls = (RealPathlibModule.WindowsPath if os.name == 'nt'
                    else RealPathlibModule.PosixPath)
-        self = cls._from_parts(args, init=True)
+        self = cls._from_parts(args)
         return self
 
 
@@ -730,7 +779,6 @@ class RealPathlibModule:
     As the original `pathlib` is always patched to use the fake path,
     we need to provide a version which does not do this.
     """
-    PurePath = pathlib.PurePath
 
     def __init__(self):
         RealPathlibModule.PureWindowsPath._flavour = pathlib._WindowsFlavour()

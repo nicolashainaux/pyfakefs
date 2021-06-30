@@ -113,8 +113,8 @@ from pyfakefs.extra_packages import use_scandir
 from pyfakefs.fake_scandir import scandir, walk
 from pyfakefs.helpers import (
     FakeStatResult, BinaryBufferIO, TextBufferIO,
-    is_int_type, is_byte_string, is_unicode_string,
-    make_string_path, IS_WIN, to_string, matching_string
+    is_int_type, is_byte_string, is_unicode_string, make_string_path,
+    IS_WIN, IS_PYPY, to_string, matching_string, real_encoding
 )
 from pyfakefs import __version__  # noqa: F401 for upwards compatibility
 
@@ -128,7 +128,7 @@ PERM_DEF_FILE = 0o666  # Default permission bits (regular file)
 PERM_ALL = 0o7777  # All permission bits.
 
 _OpenModes = namedtuple(
-    'open_modes',
+    '_OpenModes',
     'must_exist can_read can_write truncate append must_not_exist'
 )
 
@@ -293,7 +293,7 @@ class FakeFile:
         if st_mode >> 12 == 0:
             st_mode |= S_IFREG
         self.stat_result.st_mode = st_mode
-        self.encoding = encoding
+        self.encoding = real_encoding(encoding)
         self.errors = errors or 'strict'
         self._byte_contents = self._encode_contents(contents)
         self.stat_result.st_size = (
@@ -322,25 +322,25 @@ class FakeFile:
         """Return the creation time of the fake file."""
         return self.stat_result.st_ctime
 
-    @property
-    def st_atime(self):
-        """Return the access time of the fake file."""
-        return self.stat_result.st_atime
-
-    @property
-    def st_mtime(self):
-        """Return the modification time of the fake file."""
-        return self.stat_result.st_mtime
-
     @st_ctime.setter
     def st_ctime(self, val):
         """Set the creation time of the fake file."""
         self.stat_result.st_ctime = val
 
+    @property
+    def st_atime(self):
+        """Return the access time of the fake file."""
+        return self.stat_result.st_atime
+
     @st_atime.setter
     def st_atime(self, val):
         """Set the access time of the fake file."""
         self.stat_result.st_atime = val
+
+    @property
+    def st_mtime(self):
+        """Return the modification time of the fake file."""
+        return self.stat_result.st_mtime
 
     @st_mtime.setter
     def st_mtime(self, val):
@@ -430,7 +430,7 @@ class FakeFile:
           OSError: if `st_size` is not a non-negative integer,
                    or if it exceeds the available file system space.
         """
-        self.encoding = encoding
+        self.encoding = real_encoding(encoding)
         changed = self._set_initial_contents(contents)
         if self._side_effect is not None:
             self._side_effect(self)
@@ -441,36 +441,6 @@ class FakeFile:
         """Return the size in bytes of the file contents.
         """
         return self.st_size
-
-    @property
-    def path(self):
-        """Return the full path of the current object."""
-        names = []
-        obj = self
-        while obj:
-            names.insert(0, obj.name)
-            obj = obj.parent_dir
-        sep = self.filesystem._path_separator(self.name)
-        if names[0] == sep:
-            names.pop(0)
-            dir_path = sep.join(names)
-            # Windows paths with drive have a root separator entry
-            # which should be removed
-            is_drive = names and len(names[0]) == 2 and names[0][1] == ':'
-            if not is_drive:
-                dir_path = sep + dir_path
-        else:
-            dir_path = sep.join(names)
-        dir_path = self.filesystem.absnormpath(dir_path)
-        return dir_path
-
-    @Deprecator('property path')
-    def GetPath(self):
-        return self.path
-
-    @Deprecator('property size')
-    def GetSize(self):
-        return self.size
 
     @size.setter
     def size(self, st_size):
@@ -496,6 +466,36 @@ class FakeFile:
                 self._byte_contents += b'\0' * (st_size - current_size)
         self.st_size = st_size
         self.epoch += 1
+
+    @property
+    def path(self):
+        """Return the full path of the current object."""
+        names = []
+        obj = self
+        while obj:
+            names.insert(0, obj.name)
+            obj = obj.parent_dir
+        sep = self.filesystem._path_separator(self.name)
+        if names[0] == sep:
+            names.pop(0)
+            dir_path = sep.join(names)
+            drive = self.filesystem.splitdrive(dir_path)[0]
+            # if a Windows path already starts with a drive or UNC path,
+            # no extra separator is needed
+            if not drive:
+                dir_path = sep + dir_path
+        else:
+            dir_path = sep.join(names)
+        dir_path = self.filesystem.absnormpath(dir_path)
+        return dir_path
+
+    @Deprecator('property path')
+    def GetPath(self):
+        return self.path
+
+    @Deprecator('property size')
+    def GetSize(self):
+        return self.size
 
     @Deprecator('property size')
     def SetSize(self, value):
@@ -746,6 +746,10 @@ class FakeDirectory(FakeFile):
         """
         return sum([item[1].size for item in self.contents.items()])
 
+    @size.setter
+    def size(self, st_size):
+        super().size(st_size)
+
     @Deprecator('property size')
     def GetSize(self):
         return self.size
@@ -840,6 +844,10 @@ class FakeDirectoryFromRealDirectory(FakeDirectory):
         if not self.contents_read:
             return 0
         return super(FakeDirectoryFromRealDirectory, self).size
+
+    @size.setter
+    def size(self, st_size):
+        super().size(st_size)
 
 
 class FakeFilesystem:
@@ -1177,9 +1185,12 @@ class FakeFilesystem:
             OSError: if the filesystem object doesn't exist.
         """
         # stat should return the tuple representing return value of os.stat
-        file_object = self.resolve(
-            entry_path, follow_symlinks,
-            allow_fd=True, check_read_perm=False)
+        try:
+            file_object = self.resolve(
+                entry_path, follow_symlinks,
+                allow_fd=True, check_read_perm=False)
+        except TypeError:
+            file_object = self.resolve(entry_path)
         if not is_root():
             # make sure stat raises if a parent dir is not readable
             parent_dir = file_object.parent_dir
@@ -1509,9 +1520,9 @@ class FakeFilesystem:
         return self.normpath(path)
 
     def splitpath(self, path):
-        """Mimic os.path.splitpath using the specified path_separator.
+        """Mimic os.path.split using the specified path_separator.
 
-        Mimics os.path.splitpath using the path_separator that was specified
+        Mimics os.path.split using the path_separator that was specified
         for this FakeFilesystem.
 
         Args:
@@ -1521,36 +1532,31 @@ class FakeFilesystem:
             (str) A duple (pathname, basename) for which pathname does not
             end with a slash, and basename does not contain a slash.
         """
+        full_path = path
         path = self.normcase(path)
         sep = self._path_separator(path)
+        drive, path = self.splitdrive(path)
         path_components = path.split(sep)
         if not path_components:
-            return ('', '')
-
-        starts_with_drive = self._starts_with_drive_letter(path)
+            return drive, matching_string(path, '')
         basename = path_components.pop()
-        colon = matching_string(path, ':')
         if not path_components:
-            if starts_with_drive:
-                components = basename.split(colon)
-                return (components[0] + colon, components[1])
-            return ('', basename)
+            return drive, basename
         for component in path_components:
             if component:
                 # The path is not the root; it contains a non-separator
                 # component. Strip all trailing separators.
                 while not path_components[-1]:
                     path_components.pop()
-                if starts_with_drive:
-                    if not path_components:
-                        components = basename.split(colon)
-                        return (components[0] + colon, components[1])
-                    if (len(path_components) == 1 and
-                            path_components[0].endswith(colon)):
-                        return (path_components[0] + sep, basename)
-                return (sep.join(path_components), basename)
+                if not path_components:
+                    return drive, basename
+                return drive + sep.join(path_components), basename
         # Root path.  Collapse all leading separators.
-        return (sep, basename)
+        if drive and not basename:
+            return full_path, basename
+        if drive and len(drive) == 2:
+            drive += sep
+        return drive or sep, basename
 
     def splitdrive(self, path):
         """Splits the path into the drive part and the rest of the path.
@@ -1781,7 +1787,7 @@ class FakeFilesystem:
         """
         if check_link and self.islink(file_path):
             return True
-        file_path = make_string_path(file_path)
+        file_path = to_string(make_string_path(file_path))
         if file_path is None:
             raise TypeError
         if not file_path:
@@ -2928,7 +2934,7 @@ class FakeFilesystem:
         Raises:
           TypeError: if path is None
         """
-        path = make_string_path(path)
+        path = to_string(make_string_path(path))
         if path is None:
             raise TypeError
         try:
@@ -3396,15 +3402,22 @@ class FakePathModule:
         path = self._os_path.relpath(path, start)
         return path.replace(self._os_path.sep, self.filesystem.path_separator)
 
-    def realpath(self, filename):
+    def realpath(self, filename, strict=None):
         """Return the canonical path of the specified filename, eliminating any
         symbolic links encountered in the path.
         """
+        if strict is not None and sys.version_info < (3, 10):
+            raise TypeError("realpath() got an unexpected "
+                            "keyword argument 'strict'")
+        if strict:
+            # raises in strict mode if the file does not exist
+            self.filesystem.resolve(filename)
         if self.filesystem.is_windows_fs:
             return self.abspath(filename)
         filename = make_string_path(filename)
         path, ok = self._joinrealpath(filename[:0], filename, {})
-        return self.abspath(path)
+        path = self.abspath(path)
+        return path
 
     def samefile(self, path1, path2):
         """Return whether path1 and path2 point to the same file.
@@ -3495,7 +3508,7 @@ class FakePathModule:
             Under Windows also returns True for drive and UNC roots
             (independent of their existence).
         """
-        path = make_string_path(path)
+        path = to_string(make_string_path(path))
         if not path:
             return False
         normed_path = self.filesystem.absnormpath(path)
@@ -4333,6 +4346,11 @@ class FakeOsModule:
             follow_symlinks: (bool) If `False` and `path` points to a symlink,
                 the link itself is queried instead of the linked object.
         """
+        if (not follow_symlinks and
+                (os.chmod not in os.supports_follow_symlinks or IS_PYPY)):
+            raise NotImplementedError(
+                "`follow_symlinks` for chmod() is not available "
+                "on this system")
         path = self._path_with_dir_fd(path, self.chmod, dir_fd)
         self.filesystem.chmod(path, mode, follow_symlinks)
 
