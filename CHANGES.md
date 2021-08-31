@@ -3,6 +3,25 @@ The released versions correspond to PyPi releases.
 
 ## Version 4.6.0 (as yet unreleased)
 
+## [Version 4.5.1](https://pypi.python.org/pypi/pyfakefs/4.5.1) (2021-08-29)
+This is a bugfix release.
+
+### Fixes
+* added handling of path-like where missing
+* improved handling of `str`/`bytes` paths
+* suppress all warnings while inspecting loaded modules
+  (see [#614](../../issues/614))
+* do not import pandas and related modules if it is not patched
+  (see [#627](../../issues/627))
+* handle `pathlib.Path.owner()` and `pathlib.Path.group` by returning 
+  the current user/group name (see [#629](../../issues/629))
+* fixed handling of `use_known_patches=False` (could cause an exception)  
+
+### Infrastructure
+* added test dependency check (see [#608](../../issues/608))
+* skip tests failing with ASCII locale
+  (see [#623](../../issues/623))
+
 ## [Version 4.5.0](https://pypi.python.org/pypi/pyfakefs/4.5.0) (2021-06-04)
 Adds some support for Python 3.10 and basic type checking.
 

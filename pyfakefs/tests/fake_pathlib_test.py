@@ -952,13 +952,25 @@ class FakePathlibUsageInOsFunctionsTest(RealPathlibTestCase):
         self.os.makedirs(self.path(path))
         self.assertTrue(self.os.path.exists(path))
 
-    @unittest.skipIf(is_windows, 'os.readlink seems not to support '
-                                 'path-like objects under Windows')
+    @unittest.skipIf(is_windows and sys.version_info < (3, 8),
+                     'os.readlink does not to support path-like objects '
+                     'under Windows before Python 3.8')
     def test_readlink(self):
+        self.skip_if_symlink_not_supported()
         link_path = self.make_path('foo', 'bar', 'baz')
         target = self.make_path('tarJAY')
         self.create_symlink(link_path, target)
-        self.assertEqual(self.os.readlink(self.path(link_path)), target)
+        self.assert_equal_paths(self.os.readlink(self.path(link_path)), target)
+
+    @unittest.skipIf(is_windows and sys.version_info < (3, 8),
+                     'os.readlink does not to support path-like objects '
+                     'under Windows before Python 3.8')
+    def test_readlink_bytes(self):
+        self.skip_if_symlink_not_supported()
+        link_path = self.make_path(b'foo', b'bar', b'baz')
+        target = self.make_path(b'tarJAY')
+        self.create_symlink(link_path, target)
+        self.assert_equal_paths(self.os.readlink(self.path(link_path)), target)
 
     def test_remove(self):
         path = self.make_path('test.txt')
@@ -1043,6 +1055,24 @@ class FakePathlibUsageInOsFunctionsTest(RealPathlibTestCase):
         self.os.truncate(self.path(path), length=4)
         st = self.os.stat(path)
         self.assertEqual(4, st.st_size)
+
+    @unittest.skipIf(sys.platform == 'win32',
+                     'no pwd and grp modules in Windows')
+    def test_owner_and_group_posix(self):
+        self.check_posix_only()
+        path = self.make_path('some_file')
+        self.create_file(path)
+        self.assertTrue(self.path(path).owner())
+        self.assertTrue(self.path(path).group())
+
+    def test_owner_and_group_windows(self):
+        self.check_windows_only()
+        path = self.make_path('some_file')
+        self.create_file(path)
+        with self.assertRaises(NotImplementedError):
+            self.path(path).owner()
+        with self.assertRaises(NotImplementedError):
+            self.path(path).group()
 
 
 class RealPathlibUsageInOsFunctionsTest(FakePathlibUsageInOsFunctionsTest):

@@ -20,7 +20,6 @@ import errno
 import os
 import stat
 import sys
-import time
 import unittest
 
 from pyfakefs.helpers import IN_DOCKER, IS_PYPY
@@ -31,7 +30,7 @@ from pyfakefs.extra_packages import (
     use_scandir, use_scandir_package, use_builtin_scandir
 )
 
-from pyfakefs.tests.test_utils import DummyTime, TestCase, RealFsTestCase
+from pyfakefs.tests.test_utils import TestCase, RealFsTestCase
 
 
 class FakeOsModuleTestBase(RealFsTestCase):
@@ -354,10 +353,10 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
 
     def test_lstat_trailing_sep(self):
         # regression test for #342
-        stat = self.os.lstat(self.base_path)
-        self.assertEqual(stat,
+        stat_result = self.os.lstat(self.base_path)
+        self.assertEqual(stat_result,
                          self.os.lstat(self.base_path + self.path_separator()))
-        self.assertEqual(stat, self.os.lstat(
+        self.assertEqual(stat_result, self.os.lstat(
             self.base_path + self.path_separator() + self.path_separator()))
 
     def test_stat_with_byte_string(self):
@@ -1798,7 +1797,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             self.os.fsync(test_fd)
             # And just for sanity, double-check that this still raises
             self.assert_raises_os_error(errno.EBADF,
-                                        self.os.fsync, test_fd + 10)
+                                        self.os.fsync, test_fd + 500)
 
     def test_fsync_pass_windows(self):
         self.check_windows_only()
@@ -1810,7 +1809,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             self.os.fsync(test_fd)
             # And just for sanity, double-check that this still raises
             self.assert_raises_os_error(errno.EBADF,
-                                        self.os.fsync, test_fd + 10)
+                                        self.os.fsync, test_fd + 500)
         with self.open(test_file_path, 'r') as test_file:
             test_fd = test_file.fileno()
             self.assert_raises_os_error(errno.EBADF, self.os.fsync, test_fd)
@@ -1826,7 +1825,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.os.fdatasync(test_fd)
         # And just for sanity, double-check that this still raises
         self.assert_raises_os_error(errno.EBADF,
-                                    self.os.fdatasync, test_fd + 10)
+                                    self.os.fdatasync, test_fd + 500)
 
     def test_access700(self):
         # set up
@@ -2184,6 +2183,9 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
 
     def test_mknod_raises_if_unsupported_options(self):
         self.check_posix_only()
+        # behavior seems to have changed in ubuntu-20.04, version 20210606.1
+        # skipping real fs tests for now
+        self.skip_real_fs()
         filename = 'abcde'
         if not is_root():
             self.assert_raises_os_error(errno.EPERM, self.os.mknod, filename,
@@ -3729,118 +3731,107 @@ class RealOsModuleTestCaseInsensitiveFS(FakeOsModuleTestCaseInsensitiveFS):
 
 
 class FakeOsModuleTimeTest(FakeOsModuleTestBase):
-    def setUp(self):
-        super(FakeOsModuleTimeTest, self).setUp()
-        self.orig_time = time.time
-        self.dummy_time = None
-        self.setDummyTime(200)
-
-    def tearDown(self):
-        time.time = self.orig_time
-        super(FakeOsModuleTimeTest, self).tearDown()
-
-    def setDummyTime(self, start):
-        self.dummy_time = DummyTime(start, 20)
-        time.time = self.dummy_time
-
     def test_chmod_st_ctime(self):
-        # set up
-        file_path = 'some_file'
-        self.filesystem.create_file(file_path)
-        self.assertTrue(self.os.path.exists(file_path))
-        self.dummy_time.start()
+        with self.mock_time(start=200):
+            file_path = 'some_file'
+            self.filesystem.create_file(file_path)
+            self.assertTrue(self.os.path.exists(file_path))
 
-        st = self.os.stat(file_path)
-        self.assertEqual(200, st.st_ctime)
-        # tests
-        self.os.chmod(file_path, 0o765)
-        st = self.os.stat(file_path)
-        self.assertEqual(220, st.st_ctime)
+            st = self.os.stat(file_path)
+            self.assertEqual(200, st.st_ctime)
+            # tests
+            self.os.chmod(file_path, 0o765)
+            st = self.os.stat(file_path)
+            self.assertEqual(220, st.st_ctime)
 
     def test_utime_sets_current_time_if_args_is_none(self):
-        # set up
         path = self.make_path('some_file')
         self.createTestFile(path)
-        self.dummy_time.start()
 
-        st = self.os.stat(path)
-        # 200 is the current time established in setUp().
-        self.assertEqual(200, st.st_atime)
-        self.assertEqual(200, st.st_mtime)
-        # actual tests
-        self.os.utime(path, times=None)
-        st = self.os.stat(path)
-        self.assertEqual(220, st.st_atime)
-        self.assertEqual(220, st.st_mtime)
+        with self.mock_time(start=200):
+            self.os.utime(path, times=None)
+            st = self.os.stat(path)
+            self.assertEqual(200, st.st_atime)
+            self.assertEqual(200, st.st_mtime)
 
     def test_utime_sets_current_time_if_args_is_none_with_floats(self):
-        # set up
         # we set os.stat_float_times() to False, so atime/ctime/mtime
         # are converted as ints (seconds since epoch)
-        self.setDummyTime(200.9123)
-        path = '/some_file'
+        stat_float_times = fake_filesystem.FakeOsModule.stat_float_times()
         fake_filesystem.FakeOsModule.stat_float_times(False)
-        self.createTestFile(path)
-        self.dummy_time.start()
+        try:
+            with self.mock_time(start=200.9124):
+                path = '/some_file'
+                self.createTestFile(path)
 
-        st = self.os.stat(path)
-        # 200 is the current time established above (if converted to int).
-        self.assertEqual(200, st.st_atime)
-        self.assertTrue(isinstance(st.st_atime, int))
-        self.assertEqual(200, st.st_mtime)
-        self.assertTrue(isinstance(st.st_mtime, int))
+                st = self.os.stat(path)
+                # 200 is the current time established above
+                # (if converted to int)
+                self.assertEqual(200, st.st_atime)
+                self.assertTrue(isinstance(st.st_atime, int))
+                self.assertEqual(220, st.st_mtime)
+                self.assertTrue(isinstance(st.st_mtime, int))
 
-        self.assertEqual(200912300000, st.st_atime_ns)
-        self.assertEqual(200912300000, st.st_mtime_ns)
+                self.assertEqual(200912400000, st.st_atime_ns)
+                self.assertEqual(220912400000, st.st_mtime_ns)
 
-        self.assertEqual(200, st.st_mtime)
-        # actual tests
-        self.os.utime(path, times=None)
-        st = self.os.stat(path)
-        self.assertEqual(220, st.st_atime)
-        self.assertTrue(isinstance(st.st_atime, int))
-        self.assertEqual(220, st.st_mtime)
-        self.assertTrue(isinstance(st.st_mtime, int))
-        self.assertEqual(220912300000, st.st_atime_ns)
-        self.assertEqual(220912300000, st.st_mtime_ns)
+                self.assertEqual(220, st.st_mtime)
+                self.assertEqual(240, st.st_ctime)
+                # actual tests
+                self.os.utime(path, times=None)
+                st = self.os.stat(path)
+                self.assertEqual(260, st.st_atime)
+                self.assertTrue(isinstance(st.st_atime, int))
+                self.assertEqual(260, st.st_mtime)
+                self.assertTrue(isinstance(st.st_mtime, int))
+                self.assertEqual(260912400000, st.st_atime_ns)
+                self.assertEqual(260912400000, st.st_mtime_ns)
+        finally:
+            fake_filesystem.FakeOsModule.stat_float_times(stat_float_times)
 
     def test_utime_sets_current_time_if_args_is_none_with_floats_n_sec(self):
+        stat_float_times = fake_filesystem.FakeOsModule.stat_float_times()
         fake_filesystem.FakeOsModule.stat_float_times(False)
+        try:
+            with self.mock_time(start=200.9123):
+                path = self.make_path('some_file')
+                self.createTestFile(path)
+                test_file = self.filesystem.get_object(path)
 
-        self.setDummyTime(200.9123)
-        path = self.make_path('some_file')
-        self.createTestFile(path)
-        test_file = self.filesystem.get_object(path)
+                st = self.os.stat(path)
+                self.assertEqual(200, st.st_atime)
+                self.assertEqual(220, st.st_mtime)
+                self.assertEqual(240, st.st_ctime)
+                self.assertEqual(240, test_file.st_ctime)
+                self.assertTrue(isinstance(st.st_ctime, int))
+                self.assertTrue(isinstance(test_file.st_ctime, int))
 
-        self.dummy_time.start()
-        st = self.os.stat(path)
-        self.assertEqual(200, st.st_ctime)
-        self.assertEqual(200, test_file.st_ctime)
-        self.assertTrue(isinstance(st.st_ctime, int))
-        self.assertTrue(isinstance(test_file.st_ctime, int))
+                self.os.stat_float_times(True)  # first time float time
+                self.assertEqual(240, st.st_ctime)  # st does not change
+                self.assertEqual(240.9123, test_file.st_ctime)  # but the file
+                self.assertTrue(isinstance(st.st_ctime, int))
+                self.assertTrue(isinstance(test_file.st_ctime, float))
 
-        self.os.stat_float_times(True)  # first time float time
-        self.assertEqual(200, st.st_ctime)  # st does not change
-        self.assertEqual(200.9123, test_file.st_ctime)  # but the file does
-        self.assertTrue(isinstance(st.st_ctime, int))
-        self.assertTrue(isinstance(test_file.st_ctime, float))
+                self.os.stat_float_times(False)  # reverting to int
+                self.assertEqual(240, test_file.st_ctime)
+                self.assertTrue(isinstance(test_file.st_ctime, int))
 
-        self.os.stat_float_times(False)  # reverting to int
-        self.assertEqual(200, test_file.st_ctime)
-        self.assertTrue(isinstance(test_file.st_ctime, int))
+                self.assertEqual(240, st.st_ctime)
+                self.assertTrue(isinstance(st.st_ctime, int))
 
-        self.assertEqual(200, st.st_ctime)
-        self.assertTrue(isinstance(st.st_ctime, int))
-
-        self.os.stat_float_times(True)
-        st = self.os.stat(path)
-        # 200.9123 not converted to int
-        self.assertEqual(200.9123, test_file.st_atime, test_file.st_mtime)
-        self.assertEqual(200.9123, st.st_atime, st.st_mtime)
-        self.os.utime(path, times=None)
-        st = self.os.stat(path)
-        self.assertEqual(220.9123, st.st_atime)
-        self.assertEqual(220.9123, st.st_mtime)
+                self.os.stat_float_times(True)
+                st = self.os.stat(path)
+                # float time not converted to int
+                self.assertAlmostEqual(200.9123, st.st_atime)
+                self.assertAlmostEqual(220.9123, st.st_mtime)
+                self.assertAlmostEqual(240.9123, test_file.st_ctime,
+                                       st.st_ctime)
+                self.os.utime(path, times=None)
+                st = self.os.stat(path)
+                self.assertAlmostEqual(260.9123, st.st_atime)
+                self.assertAlmostEqual(260.9123, st.st_mtime)
+        finally:
+            fake_filesystem.FakeOsModule.stat_float_times(stat_float_times)
 
     def test_utime_sets_specified_time(self):
         # set up
@@ -3906,7 +3897,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         # set up
         path = self.make_path('some_file')
         self.createTestFile(path)
-        self.dummy_time.start()
 
         self.os.stat(path)
         # actual tests
