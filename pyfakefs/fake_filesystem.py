@@ -957,6 +957,7 @@ class FakeFilesystem:
         self.dev_null = FakeNullFile(self)
         # set from outside if needed
         self.patch_open_code = PatchMode.OFF
+        self.shuffle_listdir_results = False
 
     @property
     def is_linux(self) -> bool:
@@ -3227,8 +3228,8 @@ class FakeFilesystem:
 
         Returns:
             A list of file names within the target directory in arbitrary
-            order. Note that the order is intentionally not the same in
-            subsequent calls to avoid tests relying on any ordering.
+            order. If `shuffle_listdir_results` is set, the order is not the
+            same in subsequent calls to avoid tests relying on any ordering.
 
         Raises:
             OSError: if the target is not a directory.
@@ -3236,7 +3237,8 @@ class FakeFilesystem:
         target_directory = self.resolve_path(target_directory, allow_fd=True)
         directory = self.confirmdir(target_directory)
         directory_contents = list(directory.entries.keys())
-        random.shuffle(directory_contents)
+        if self.shuffle_listdir_results:
+            random.shuffle(directory_contents)
         return directory_contents  # type: ignore[return-value]
 
     def __str__(self) -> str:
@@ -4862,6 +4864,49 @@ class FakeIoModule:
     def __getattr__(self, name):
         """Forwards any unfaked calls to the standard io module."""
         return getattr(self._io_module, name)
+
+
+if sys.platform != 'win32':
+    import fcntl
+
+    class FakeFcntlModule:
+        """Replaces the fcntl module. Only valid under Linux/MacOS,
+        currently just mocks the functionality away.
+        """
+
+        @staticmethod
+        def dir() -> List[str]:
+            """Return the list of patched function names. Used for patching
+            functions imported from the module.
+            """
+            return ['fcntl', 'ioctl', 'flock', 'lockf']
+
+        def __init__(self, filesystem: FakeFilesystem):
+            """
+            Args:
+                filesystem: FakeFilesystem used to provide file system
+                information (currently not used).
+            """
+            self.filesystem = filesystem
+            self._fcntl_module = fcntl
+
+        def fcntl(self, fd: int, cmd: int, arg: int = 0) -> Union[int, bytes]:
+            return 0
+
+        def ioctl(self, fd: int, request: int, arg: int = 0,
+                  mutate_flag: bool = True) -> Union[int, bytes]:
+            return 0
+
+        def flock(self, fd: int, operation: int) -> None:
+            pass
+
+        def lockf(self, fd: int, cmd: int, len: int = 0,
+                  start: int = 0, whence=0) -> Any:
+            pass
+
+        def __getattr__(self, name):
+            """Forwards any unfaked calls to the standard fcntl module."""
+            return getattr(self._fcntl_module, name)
 
 
 class FakeFileWrapper:

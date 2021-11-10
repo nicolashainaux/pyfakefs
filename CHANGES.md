@@ -3,9 +3,25 @@ The released versions correspond to PyPi releases.
 
 ## Version 4.6.0 (as yet unreleased)
 
+## [Version 4.5.3](https://pypi.python.org/pypi/pyfakefs/4.5.3) (2021-11-08)
+Reverts a change in the previous release that could cause a regression.
+
+### Changes
+* `os.listdir`, `os.scandir` and `pathlib.Path.listdir` now return the
+  directory list in a random order only if explicitly configured in the 
+  file system (use `fs.shuffle_listdir_results = True` with `fs` being the 
+  file system). In a future version, the default may be changed to better 
+  reflect the real filesystem behavior (see [#647](../../issues/647))
+  
+## [Version 4.5.2](https://pypi.python.org/pypi/pyfakefs/4.5.2) (2021-11-07)
+This is a bugfix release.
+
 ### Changes
 * `os.listdir`, `os.scandir` and `pathlib.Path.listdir` now return the
   directory list in a random order (see [#638](../../issues/638))
+* the `fcntl` module under Unix is now mocked, e.g. all functions have no 
+  effect (this may be changed in the future if needed,
+  see [#645](../../issues/645))  
 
 ### Fixes
 * fixed handling of alternative path separator in `os.path.split`,
