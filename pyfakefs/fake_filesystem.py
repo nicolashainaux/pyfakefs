@@ -439,8 +439,6 @@ class FakeFile:
         current_size = self.st_size or 0
         self.filesystem.change_disk_usage(
             st_size - current_size, self.name, self.st_dev)
-        if self._byte_contents:
-            self.size = 0
         self._byte_contents = byte_contents
         self.st_size = st_size
         self.epoch += 1
@@ -456,6 +454,9 @@ class FakeFile:
           encoding: (str) the encoding to be used for writing the contents
                     if they are a unicode string.
                     If not given, the locale preferred encoding is used.
+
+        Returns:
+            True if the contents have been changed.
 
         Raises:
           OSError: if `st_size` is not a non-negative integer,
@@ -518,8 +519,7 @@ class FakeFile:
                 dir_path = sep + dir_path
         else:
             dir_path = sep.join(names)
-        dir_path = self.filesystem.absnormpath(dir_path)
-        return dir_path
+        return self.filesystem.absnormpath(dir_path)
 
     @Deprecator('property path')
     def GetPath(self):
@@ -1119,8 +1119,9 @@ class FakeFilesystem:
 
     def _mount_point_for_path(self, path: AnyStr) -> Dict:
         path = self.absnormpath(self._original_path(path))
-        if path in self.mount_points:
-            return self.mount_points[path]
+        for mount_path in self.mount_points:
+            if path == matching_string(path, mount_path):
+                return self.mount_points[mount_path]
         mount_path = matching_string(path, '')
         drive = self.splitdrive(path)[0]
         for root_path in self.mount_points:
@@ -2049,9 +2050,9 @@ class FakeFilesystem:
             OSError: if the object is not found.
         """
         path = make_string_path(file_path)
-        if path == self.root.name:
+        if path == matching_string(path, self.root.name):
             return self.root
-        if path == self.dev_null.name:
+        if path == matching_string(path, self.dev_null.name):
             return self.dev_null
 
         path = self._original_path(path)
@@ -2144,7 +2145,7 @@ class FakeFilesystem:
         path_str = make_string_path(path)
         if not path_str:
             raise OSError(errno.ENOENT, path_str)
-        if path_str == self.root.name:
+        if path_str == matching_string(path_str, self.root.name):
             # The root directory will never be a link
             return self.root
 
@@ -2463,7 +2464,7 @@ class FakeFilesystem:
 
         return current_dir
 
-    def create_file(self, file_path: AnyStr,
+    def create_file(self, file_path: AnyPath,
                     st_mode: int = S_IFREG | PERM_DEF_FILE,
                     contents: AnyString = '',
                     st_size: Optional[int] = None,
@@ -2505,9 +2506,9 @@ class FakeFilesystem:
             file_path, st_mode, contents, st_size, create_missing_dirs,
             apply_umask, encoding, errors, side_effect=side_effect)
 
-    def add_real_file(self, source_path: AnyStr,
+    def add_real_file(self, source_path: AnyPath,
                       read_only: bool = True,
-                      target_path: Optional[AnyStr] = None) -> FakeFile:
+                      target_path: Optional[AnyPath] = None) -> FakeFile:
         """Create `file_path`, including all the parent directories along the
         way, for an existing real file. The contents of the real file are read
         only on demand.
@@ -3202,7 +3203,7 @@ class FakeFilesystem:
             OSError: if removal failed per FakeFilesystem.RemoveObject.
                 Cannot remove '.'.
         """
-        if target_directory in (b'.', u'.'):
+        if target_directory == matching_string(target_directory, '.'):
             error_nr = errno.EACCES if self.is_windows_fs else errno.EINVAL
             self.raise_os_error(error_nr, target_directory)
         ends_with_sep = self.ends_with_path_separator(target_directory)
@@ -3933,10 +3934,10 @@ class FakeOsModule:
 
     def pipe(self) -> Tuple[int, int]:
         read_fd, write_fd = os.pipe()
-        read_wrapper = FakePipeWrapper(self.filesystem, read_fd)
+        read_wrapper = FakePipeWrapper(self.filesystem, read_fd, False)
         file_des = self.filesystem._add_open_file(read_wrapper)
         read_wrapper.filedes = file_des
-        write_wrapper = FakePipeWrapper(self.filesystem, write_fd)
+        write_wrapper = FakePipeWrapper(self.filesystem, write_fd, True)
         file_des = self.filesystem._add_open_file(write_wrapper)
         write_wrapper.filedes = file_des
         return read_wrapper.filedes, write_wrapper.filedes
@@ -4653,7 +4654,7 @@ class FakeOsModule:
             if self.filesystem.exists(head, check_link=True):
                 self.filesystem.raise_os_error(errno.EEXIST, path)
             self.filesystem.raise_os_error(errno.ENOENT, path)
-        if tail in (b'.', u'.', b'..', u'..'):
+        if tail in (matching_string(tail, '.'), matching_string(tail, '..')):
             self.filesystem.raise_os_error(errno.ENOENT, path)
         if self.filesystem.exists(path, check_link=True):
             self.filesystem.raise_os_error(errno.EEXIST, path)
@@ -5051,8 +5052,9 @@ class FakeFileWrapper:
                 self._set_stream_contents(contents)
             else:
                 self._io.flush()
+            changed = self.file_object.set_contents(contents, self._encoding)
             self.update_flush_pos()
-            if self.file_object.set_contents(contents, self._encoding):
+            if changed:
                 if self._filesystem.is_windows_fs:
                     self._changed = True
                 else:
@@ -5385,7 +5387,7 @@ class StandardStreamWrapper:
             return self.filedes
         raise OSError(errno.EBADF, 'Invalid file descriptor')
 
-    def read(self, n: int) -> bytes:
+    def read(self, n: int = -1) -> bytes:
         return cast(bytes, self._stream_object.read())
 
     def close(self) -> None:
@@ -5429,11 +5431,16 @@ class FakePipeWrapper:
     used in open files list.
     """
 
-    def __init__(self, filesystem: FakeFilesystem, fd: int):
+    def __init__(self, filesystem: FakeFilesystem,
+                 fd: int, can_write: bool, mode: str = ''):
         self._filesystem = filesystem
         self.fd = fd  # the real file descriptor
+        self.can_write = can_write
         self.file_object = None
         self.filedes: Optional[int] = None
+        self.real_file = None
+        if mode:
+            self.real_file = open(fd, mode)
 
     def __enter__(self) -> 'FakePipeWrapper':
         """To support usage of this fake pipe with the 'with' statement."""
@@ -5455,8 +5462,10 @@ class FakePipeWrapper:
             return self.filedes
         raise OSError(errno.EBADF, 'Invalid file descriptor')
 
-    def read(self, numBytes: int) -> bytes:
+    def read(self, numBytes: int = -1) -> bytes:
         """Read from the real pipe."""
+        if self.real_file:
+            return self.real_file.read(numBytes)
         return os.read(self.fd, numBytes)
 
     def flush(self) -> None:
@@ -5465,6 +5474,8 @@ class FakePipeWrapper:
 
     def write(self, contents: bytes) -> int:
         """Write to the real pipe."""
+        if self.real_file:
+            return self.real_file.write(contents)
         return os.write(self.fd, contents)
 
     def close(self) -> None:
@@ -5473,7 +5484,22 @@ class FakePipeWrapper:
         open_files = self._filesystem.open_files[self.filedes]
         assert open_files is not None
         open_files.remove(self)
-        os.close(self.fd)
+        if self.real_file:
+            self.real_file.close()
+        else:
+            os.close(self.fd)
+
+    def readable(self) -> bool:
+        """The pipe end can either be readable or writable."""
+        return not self.can_write
+
+    def writable(self) -> bool:
+        """The pipe end can either be readable or writable."""
+        return self.can_write
+
+    def seekable(self) -> bool:
+        """A pipe is not seekable."""
+        return False
 
 
 Deprecator.add(FakeFileWrapper, FakeFileWrapper.get_object, 'GetObject')
@@ -5545,6 +5571,10 @@ class FakeFileOpen:
             ValueError: for an invalid mode or mode combination
         """
         binary = 'b' in mode
+
+        if binary and encoding:
+            raise ValueError("binary mode doesn't take an encoding argument")
+
         newline, open_modes = self._handle_file_mode(mode, newline, open_modes)
 
         file_object, file_path, filedes, real_path = self._handle_file_arg(
@@ -5559,7 +5589,8 @@ class FakeFileOpen:
             assert wrappers is not None
             existing_wrapper = wrappers[0]
             assert isinstance(existing_wrapper, FakePipeWrapper)
-            wrapper = FakePipeWrapper(self.filesystem, existing_wrapper.fd)
+            wrapper = FakePipeWrapper(self.filesystem, existing_wrapper.fd,
+                                      existing_wrapper.can_write, mode)
             file_des = self.filesystem._add_open_file(wrapper)
             wrapper.filedes = file_des
             return wrapper
