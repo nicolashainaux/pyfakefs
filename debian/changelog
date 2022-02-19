@@ -1,3 +1,9 @@
+python3-pyfakefs (4.5.5-0ubuntu1) focal; urgency=low
+
+ * Update to 4.5.5 release.
+
+ -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Sat, 19 Feb 2022 07:53:06 +0100
+
 python3-pyfakefs (4.5.3-0ubuntu1) focal; urgency=low
 
  * Update to 4.5.3 release.
