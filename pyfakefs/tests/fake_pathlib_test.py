@@ -26,27 +26,39 @@ import pathlib
 import stat
 import sys
 import unittest
+from collections import namedtuple
+from unittest import mock
 
+from pyfakefs import fake_pathlib, fake_filesystem, fake_filesystem_unittest
 from pyfakefs.fake_filesystem import is_root
-
-from pyfakefs import fake_pathlib, fake_filesystem
 from pyfakefs.helpers import IS_PYPY
-from pyfakefs.tests.test_utils import RealFsTestCase
+from pyfakefs.tests.test_utils import RealFsTestMixin
 
 is_windows = sys.platform == 'win32'
 
 
-class RealPathlibTestCase(RealFsTestCase):
+class RealPathlibTestCase(fake_filesystem_unittest.TestCase, RealFsTestMixin):
+    is_windows = sys.platform == 'win32'
+
     def __init__(self, methodName='runTest'):
-        super(RealPathlibTestCase, self).__init__(methodName)
-        self.pathlib = pathlib
-        self.path = None
+        fake_filesystem_unittest.TestCase.__init__(self, methodName)
+        RealFsTestMixin.__init__(self)
 
     def setUp(self):
-        super().setUp()
+        RealFsTestMixin.setUp(self)
+        self.filesystem = None
+        self.real_os = os
         if not self.use_real_fs():
-            self.pathlib = fake_pathlib.FakePathlibModule(self.filesystem)
-        self.path = self.pathlib.Path
+            self.setUpPyfakefs()
+            self.filesystem = self.fs
+            self.create_basepath()
+        self.pathlib = pathlib
+        self.path = pathlib.Path
+        self.os = os
+        self.open = open
+
+    def use_real_fs(self):
+        return False
 
 
 class FakePathlibInitializationTest(RealPathlibTestCase):
@@ -178,7 +190,8 @@ class FakePathlibInitializationWithDriveTest(RealPathlibTestCase):
 
 
 class RealPathlibInitializationWithDriveTest(
-        FakePathlibInitializationWithDriveTest):
+    FakePathlibInitializationWithDriveTest
+):
     def use_real_fs(self):
         return True
 
@@ -383,7 +396,7 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
         self.skip_if_symlink_not_supported()
         file_stat = self.os.stat(self.file_path)
         link_stat = self.os.lstat(self.file_link_path)
-        if not hasattr(os, "lchmod"):
+        if not hasattr(self.real_os, "lchmod"):
             with self.assertRaises(NotImplementedError):
                 self.path(self.file_link_path).lchmod(0o444)
         else:
@@ -393,13 +406,16 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
             self.assertEqual(link_stat.st_mode & 0o777700,
                              stat.S_IFLNK | 0o700)
 
-    @unittest.skipIf(sys.version_info < (3, 10),
-                     "follow_symlinks argument new in Python 3.10")
+    @unittest.skipIf(
+        sys.version_info < (3, 10),
+        "follow_symlinks argument new in Python 3.10"
+    )
     def test_chmod_no_followsymlinks(self):
         self.skip_if_symlink_not_supported()
         file_stat = self.os.stat(self.file_path)
         link_stat = self.os.lstat(self.file_link_path)
-        if os.chmod not in os.supports_follow_symlinks or IS_PYPY:
+        if (self.real_os.chmod not in os.supports_follow_symlinks
+                or IS_PYPY):
             with self.assertRaises(NotImplementedError):
                 self.path(self.file_link_path).chmod(0o444,
                                                      follow_symlinks=False)
@@ -443,11 +459,11 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
         file_path = self.os.path.join(dir_path, 'some_file')
         self.create_file(file_path)
         self.os.chmod(dir_path, 0o000)
-        iter = self.path(dir_path).iterdir()
+        it = self.path(dir_path).iterdir()
         if not is_root():
-            self.assert_raises_os_error(errno.EACCES, list, iter)
+            self.assert_raises_os_error(errno.EACCES, list, it)
         else:
-            path = str(list(iter)[0])
+            path = str(list(it)[0])
             self.assertTrue(path.endswith('some_file'))
 
     def test_resolve_nonexisting_file(self):
@@ -1059,11 +1075,36 @@ class FakePathlibUsageInOsFunctionsTest(RealPathlibTestCase):
     @unittest.skipIf(sys.platform == 'win32',
                      'no pwd and grp modules in Windows')
     def test_owner_and_group_posix(self):
-        self.check_posix_only()
         path = self.make_path('some_file')
         self.create_file(path)
         self.assertTrue(self.path(path).owner())
         self.assertTrue(self.path(path).group())
+
+    @unittest.skipIf(sys.platform == 'win32',
+                     'no pwd and grp modules in Windows')
+    def test_changed_owner_and_group(self):
+        def fake_getpwuid(uid):
+            if uid == 42:
+                user_struct = namedtuple('user', 'pw_name, pw_uid')
+                user_struct.pw_name = 'NewUser'
+                return user_struct
+            raise KeyError
+
+        def fake_getgrgid(uid):
+            if uid == 5:
+                group_struct = namedtuple('group', 'gr_name, gr_gid')
+                group_struct.gr_name = 'NewGroup'
+                return group_struct
+            raise KeyError
+
+        self.skip_real_fs()
+        path = self.make_path('some_file')
+        self.create_file(path)
+        self.os.chown(path, 42, 5)
+        with mock.patch('pwd.getpwuid', fake_getpwuid):
+            with mock.patch('grp.getgrgid', fake_getgrgid):
+                self.assertEqual('NewUser', self.path(path).owner())
+                self.assertEqual('NewGroup', self.path(path).group())
 
     def test_owner_and_group_windows(self):
         self.check_windows_only()

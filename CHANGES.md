@@ -3,6 +3,48 @@ The released versions correspond to PyPi releases.
 
 ## Unreleased
 
+## [Version 4.6.0](https://pypi.python.org/pypi/pyfakefs/4.6.0) (2022-07-12)
+Adds support for Python 3.11, removes support for Python 3.6, changes root 
+path behavior under Windows. 
+
+### Changes
+* Python 3.6 has reached its end of life on 2021/12/23 and is no
+  longer officially supported by pyfakefs
+  ** `os.stat_float_times` has been removed in Python 3.7 and is therefore no 
+     longer supported
+* under Windows, the root path is now effectively `C:\` instead of `\`; a 
+  path starting with `\` points to the current drive as in the real file 
+  system (see [#673](../../issues/673))
+* fake `pathlib.Path.owner()` and `pathlib.Path.group()` now behave like the 
+  real methods - they look up the real user/group name for the user/group id
+  that is associated with the fake file (see [#678](../../issues/678))
+
+### New Features
+* added some support for the upcoming Python version 3.11
+  (see [#677](../../issues/677))
+* added convenience fixtures for module- and session based `fs` fixtures
+  (`fs_module` and `fs_session`)
+
+### Fixes
+* fixed an incompatibility of `tmpdir` (and probably other fixtures) with the 
+  module-scoped version of `fs`; had been introduced in 
+  pyfakefs 4.5.5 by the fix for [#666](../../issues/666)
+  (see [#684](../../issues/684))
+
+## [Version 4.5.6](https://pypi.python.org/pypi/pyfakefs/4.5.6) (2022-03-17)
+Fixes a regression which broke tests with older pytest versions (< 3.9).
+
+### Changes
+* minimum supported pytest version is now 3.0 (older versions do not work 
+  properly with current Python versions)
+
+### Fixes
+* only skip `_pytest.pathlib` in pytest versions where it is actually present
+  (see [#669](../../issues/669))
+
+### Infrastructure
+* add tests with different pytest versions, starting with 3.0
+
 ## [Version 4.5.5](https://pypi.python.org/pypi/pyfakefs/4.5.5) (2022-02-14)
 Bugfix release, needed for compatibility with pytest 7.0.
 
