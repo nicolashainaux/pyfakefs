@@ -1,6 +1,6 @@
 Source: python3-pyfakefs
 Maintainer: Nicolas Hainaux <nicolas.hainaux@gmail.com>
-Build-Depends: debhelper, dh-python, python3-all, python3-setuptools, tox, python3-pytest, python3-pytest-cov
+Build-Depends: debhelper, dh-python, python3-all, python3-setuptools, python3-pytest, python3-pytest-cov
 Section: devel
 Priority: optional
 Standards-Version: 3.9.6

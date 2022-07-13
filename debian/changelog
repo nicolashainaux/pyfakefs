@@ -1,3 +1,10 @@
+python3-pyfakefs (4.6.0-0ubuntu2~jammy) jammy; urgency=low
+
+ * Update to 4.6.0 release.
+
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Wed, 13 Jul 2022 17:57:03 +0200
+
+
 python3-pyfakefs (4.6.0-0ubuntu1~jammy) jammy; urgency=low
 
  * Update to 4.6.0 release.
