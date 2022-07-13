@@ -1,51 +1,57 @@
+python3-pyfakefs (4.6.0-0ubuntu1~focal) focal; urgency=low
+
+ * Update to 4.6.0 release.
+
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Wed, 13 Jul 2022 07:08:46 +0200
+
 python3-pyfakefs (4.5.5-0ubuntu1) focal; urgency=low
 
  * Update to 4.5.5 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Sat, 19 Feb 2022 07:53:06 +0100
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Sat, 19 Feb 2022 07:53:06 +0100
 
 python3-pyfakefs (4.5.3-0ubuntu1) focal; urgency=low
 
  * Update to 4.5.3 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Wed, 10 Nov 2021 20:35:05 +0100
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Wed, 10 Nov 2021 20:35:05 +0100
 
 python3-pyfakefs (4.5.1-0ubuntu1) focal; urgency=low
 
  * Update to 4.5.1 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Tue, 31 Aug 2021 09:36:42 +0200
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Tue, 31 Aug 2021 09:36:42 +0200
 
 python3-pyfakefs (4.5.0-0ubuntu1) focal; urgency=low
 
  * Update to 4.5.0 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Wed, 30 Jun 2021 14:38:49 +0200
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Wed, 30 Jun 2021 14:38:49 +0200
 
 
 python3-pyfakefs (4.4.0-0ubuntu2) focal; urgency=low
 
  * Update to 4.4.0 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Thu, 11 Mar 2021 16:24:41 +0100
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Thu, 11 Mar 2021 16:24:41 +0100
 
 
 python3-pyfakefs (4.3.3-0ubuntu2) focal; urgency=low
 
   * Fixed 4.3.3 release (it includes a new feature and a necessary bug fix that were published right after 4.3.3).
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Wed, 13 Jan 2021 17:34:00 +0100
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Wed, 13 Jan 2021 17:34:00 +0100
 
 
 python3-pyfakefs (4.3.3-0ubuntu1) focal; urgency=low
 
   * Update to 4.3.3 release.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Tue, 29 Dec 2020 07:18:41 +0100
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Tue, 29 Dec 2020 07:18:41 +0100
 
 
 python3-pyfakefs (4.1.0-0ubuntu1) focal; urgency=low
 
   * Add the necessary files to package John McGehee's pyfakefs for Ubuntu. See upstream package at https://github.com/jmcgeheeiv/pyfakefs.
 
- -- Nicolas Hainaux <nicolas.hainaux@gmail.com>  Tue, 25 Aug 2020 06:47:07 +0200
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Tue, 25 Aug 2020 06:47:07 +0200
