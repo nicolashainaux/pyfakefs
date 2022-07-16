@@ -1,3 +1,9 @@
+python3-pyfakefs (4.6.2-0ubuntu1~focal) focal; urgency=low
+
+ * Patch release.
+
+ -- Nicolas Hainaux <nicolas.hainaux@posteo.net>  Sat, 16 Jul 2022 07:54:53 +0200
+
 python3-pyfakefs (4.6.0-0ubuntu2~jammy) jammy; urgency=low
 
  * Update to 4.6.0 release.
