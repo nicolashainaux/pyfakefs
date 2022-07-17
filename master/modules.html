@@ -6,7 +6,7 @@
   <head>
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Public Modules and Classes &#8212; pyfakefs 4.6.dev0 documentation</title>
+    <title>Public Modules and Classes &#8212; pyfakefs 4.7.dev0 documentation</title>
     <link rel="stylesheet" href="_static/pyfakefs.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
@@ -34,7 +34,7 @@
         <li class="right" >
           <a href="autopatch.html" title="Automatically find and patch file functions and modules"
              accesskey="P">previous</a> |</li>
-        <li class="nav-item nav-item-0"><a href="index.html">pyfakefs 4.6.dev0 documentation</a> &#187;</li> 
+        <li class="nav-item nav-item-0"><a href="index.html">pyfakefs 4.7.dev0 documentation</a> &#187;</li> 
       </ul>
     </div>  
 
@@ -217,12 +217,6 @@ no permision checks are performed.</p>
 </dd></dl>
 
 <dl class="attribute">
-<dt id="pyfakefs.fake_filesystem.FakeFilesystem.cwd">
-<code class="descname">cwd</code><a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.cwd" title="Permalink to this definition">¶</a></dt>
-<dd><p>The current working directory path.</p>
-</dd></dl>
-
-<dl class="attribute">
 <dt id="pyfakefs.fake_filesystem.FakeFilesystem.umask">
 <code class="descname">umask</code><a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.umask" title="Permalink to this definition">¶</a></dt>
 <dd><p>The umask used for newly created files, see <cite>os.umask</cite>.</p>
@@ -233,6 +227,20 @@ no permision checks are performed.</p>
 <code class="descname">patcher</code><a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.patcher" title="Permalink to this definition">¶</a></dt>
 <dd><p>Holds the Patcher object if created from it. Allows access
 to the patcher object if using the pytest fs fixture.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="pyfakefs.fake_filesystem.FakeFilesystem.patch_open_code">
+<code class="descname">patch_open_code</code><a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.patch_open_code" title="Permalink to this definition">¶</a></dt>
+<dd><p>Defines how <cite>io.open_code</cite> will be patched;
+patching can be on, off, or in automatic mode.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="pyfakefs.fake_filesystem.FakeFilesystem.shuffle_listdir_results">
+<code class="descname">shuffle_listdir_results</code><a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.shuffle_listdir_results" title="Permalink to this definition">¶</a></dt>
+<dd><p>If <cite>True</cite>, <cite>os.listdir</cite> will not sort the
+results to match the real file system behavior.</p>
 </dd></dl>
 
 <table class="docutils field-list" frame="void" rules="none">
@@ -283,7 +291,7 @@ Does nothing if patching is not paused.
 
 <dl class="method">
 <dt id="pyfakefs.fake_filesystem.FakeFilesystem.add_mount_point">
-<code class="descname">add_mount_point</code><span class="sig-paren">(</span><em>path: AnyStr</em>, <em>total_size: Optional[int] = None</em><span class="sig-paren">)</span> &#x2192; Dict[KT, VT]<a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.add_mount_point" title="Permalink to this definition">¶</a></dt>
+<code class="descname">add_mount_point</code><span class="sig-paren">(</span><em>path: AnyStr</em>, <em>total_size: Optional[int] = None</em>, <em>can_exist: bool = False</em><span class="sig-paren">)</span> &#x2192; Dict[KT, VT]<a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.add_mount_point" title="Permalink to this definition">¶</a></dt>
 <dd><p>Add a new mount point for a filesystem device.
 The mount point gets a new unique device number.</p>
 <table class="docutils field-list" frame="void" rules="none">
@@ -294,13 +302,16 @@ The mount point gets a new unique device number.</p>
 <li><strong>path</strong> – The root path for the new mount path.</li>
 <li><strong>total_size</strong> – The new total size of the added filesystem device
 in bytes. Defaults to infinite size.</li>
+<li><strong>can_exist</strong> – If True, no error is raised if the mount point
+already exists</li>
 </ul>
 </td>
 </tr>
 <tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">The newly created mount point dict.</p>
 </td>
 </tr>
-<tr class="field-odd field"><th class="field-name">Raises:</th><td class="field-body"><p class="first last"><code class="xref py py-exc docutils literal notranslate"><span class="pre">OSError</span></code> – if trying to mount an existing mount point again.</p>
+<tr class="field-odd field"><th class="field-name">Raises:</th><td class="field-body"><p class="first last"><code class="xref py py-exc docutils literal notranslate"><span class="pre">OSError</span></code> – if trying to mount an existing mount point again,
+and <cite>can_exist</cite> is False.</p>
 </td>
 </tr>
 </tbody>
@@ -406,7 +417,7 @@ does not have read permission</li>
 
 <dl class="method">
 <dt id="pyfakefs.fake_filesystem.FakeFilesystem.create_file">
-<code class="descname">create_file</code><span class="sig-paren">(</span><em>file_path: AnyStr</em>, <em>st_mode: int = 33206</em>, <em>contents: Union[str</em>, <em>bytes] = ''</em>, <em>st_size: Optional[int] = None</em>, <em>create_missing_dirs: bool = True</em>, <em>apply_umask: bool = False</em>, <em>encoding: Optional[str] = None</em>, <em>errors: Optional[str] = None</em>, <em>side_effect: Optional[Callable] = None</em><span class="sig-paren">)</span> &#x2192; pyfakefs.fake_filesystem.FakeFile<a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.create_file" title="Permalink to this definition">¶</a></dt>
+<code class="descname">create_file</code><span class="sig-paren">(</span><em>file_path: Union[AnyStr, os.PathLike], st_mode: int = 33206, contents: Union[str, bytes] = '', st_size: Optional[int] = None, create_missing_dirs: bool = True, apply_umask: bool = False, encoding: Optional[str] = None, errors: Optional[str] = None, side_effect: Optional[Callable] = None</em><span class="sig-paren">)</span> &#x2192; pyfakefs.fake_filesystem.FakeFile<a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.create_file" title="Permalink to this definition">¶</a></dt>
 <dd><p>Create <cite>file_path</cite>, including all the parent directories along
 the way.</p>
 <p>This helper method can be used to set up tests more easily.</p>
@@ -448,7 +459,7 @@ must accept the file object as an argument.</li>
 
 <dl class="method">
 <dt id="pyfakefs.fake_filesystem.FakeFilesystem.add_real_file">
-<code class="descname">add_real_file</code><span class="sig-paren">(</span><em>source_path: AnyStr</em>, <em>read_only: bool = True</em>, <em>target_path: Optional[AnyStr] = None</em><span class="sig-paren">)</span> &#x2192; pyfakefs.fake_filesystem.FakeFile<a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.add_real_file" title="Permalink to this definition">¶</a></dt>
+<code class="descname">add_real_file</code><span class="sig-paren">(</span><em>source_path: Union[AnyStr, os.PathLike], read_only: bool = True, target_path: Union[AnyStr, os.PathLike, None] = None</em><span class="sig-paren">)</span> &#x2192; pyfakefs.fake_filesystem.FakeFile<a class="headerlink" href="#pyfakefs.fake_filesystem.FakeFilesystem.add_real_file" title="Permalink to this definition">¶</a></dt>
 <dd><p>Create <cite>file_path</cite>, including all the parent directories along the
 way, for an existing real file. The contents of the real file are read
 only on demand.</p>
@@ -728,7 +739,10 @@ If not given, the locale preferred encoding is used.</li>
 </ul>
 </td>
 </tr>
-<tr class="field-even field"><th class="field-name">Raises:</th><td class="field-body"><p class="first last"><code class="xref py py-exc docutils literal notranslate"><span class="pre">OSError</span></code> – if <cite>st_size</cite> is not a non-negative integer,
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">True if the contents have been changed.</p>
+</td>
+</tr>
+<tr class="field-odd field"><th class="field-name">Raises:</th><td class="field-body"><p class="first last"><code class="xref py py-exc docutils literal notranslate"><span class="pre">OSError</span></code> – if <cite>st_size</cite> is not a non-negative integer,
 or if it exceeds the available file system space.</p>
 </td>
 </tr>
@@ -1129,7 +1143,6 @@ or <cite>open()</cite> function.</p>
 <dt id="pyfakefs.fake_filesystem.FakeIoModule">
 <em class="property">class </em><code class="descclassname">pyfakefs.fake_filesystem.</code><code class="descname">FakeIoModule</code><span class="sig-paren">(</span><em>filesystem: pyfakefs.fake_filesystem.FakeFilesystem</em><span class="sig-paren">)</span><a class="headerlink" href="#pyfakefs.fake_filesystem.FakeIoModule" title="Permalink to this definition">¶</a></dt>
 <dd><p>Uses FakeFilesystem to provide a fake io module replacement.</p>
-<p>Currently only used to wrap <cite>io.open()</cite> which is an alias to <cite>open()</cite>.</p>
 <p>You need a fake_filesystem to use this:
 filesystem = fake_filesystem.FakeFilesystem()
 my_io_module = fake_filesystem.FakeIoModule(filesystem)</p>
@@ -1257,14 +1270,14 @@ that is available on pypi.</p>
         <li class="right" >
           <a href="autopatch.html" title="Automatically find and patch file functions and modules"
              >previous</a> |</li>
-        <li class="nav-item nav-item-0"><a href="index.html">pyfakefs 4.6.dev0 documentation</a> &#187;</li> 
+        <li class="nav-item nav-item-0"><a href="index.html">pyfakefs 4.7.dev0 documentation</a> &#187;</li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
         &#169; Copyright 2009 Google Inc. All Rights Reserved.
 © Copyright 2014 Altera Corporation. All Rights Reserved.
 © Copyright 2014-2021 John McGehee.
-      Last updated on Aug 31, 2021.
+      Last updated on Jul 17, 2022.
     </div>
   </body>
 </html>
