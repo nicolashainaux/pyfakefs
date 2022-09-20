@@ -1285,7 +1285,8 @@ class FakeFilesystem:
         if path is None:
             mount_point = next(iter(self.mount_points.values()))
         else:
-            mount_point = self._mount_point_for_path(path)
+            file_path = make_string_path(path)
+            mount_point = self._mount_point_for_path(file_path)
         if mount_point and mount_point['total_size'] is not None:
             return DiskUsage(mount_point['total_size'],
                              mount_point['used_size'],
@@ -4395,7 +4396,8 @@ class FakeOsModule:
 
     def lstat(self, path: AnyStr, *,
               dir_fd: Optional[int] = None) -> FakeStatResult:
-        """Return the os.stat-like tuple for entry_path, not following symlinks.
+        """Return the os.stat-like tuple for entry_path,
+        not following symlinks.
 
         Args:
             path:  path to filesystem object to retrieve.
@@ -4474,6 +4476,32 @@ class FakeOsModule:
         src = self._path_with_dir_fd(src, self.rename, src_dir_fd)
         dst = self._path_with_dir_fd(dst, self.rename, dst_dir_fd)
         self.filesystem.rename(src, dst)
+
+    def renames(self, old: AnyStr, new: AnyStr):
+        """Fakes `os.renames`, documentation taken from there.
+
+        Super-rename; create directories as necessary and delete any left
+        empty.  Works like rename, except creation of any intermediate
+        directories needed to make the new pathname good is attempted
+        first.  After the rename, directories corresponding to rightmost
+        path segments of the old name will be pruned until either the
+        whole path is consumed or a nonempty directory is found.
+
+        Note: this function can fail with the new directory structure made
+        if you lack permissions needed to unlink the leaf directory or
+        file.
+
+        """
+        head, tail = self.filesystem.splitpath(new)
+        if head and tail and not self.filesystem.exists(head):
+            self.makedirs(head)
+        self.rename(old, new)
+        head, tail = self.filesystem.splitpath(old)
+        if head and tail:
+            try:
+                self.removedirs(head)
+            except OSError:
+                pass
 
     def replace(self, src: AnyStr, dst: AnyStr, *,
                 src_dir_fd: Optional[int] = None,
@@ -5083,11 +5111,11 @@ if sys.platform != 'win32':
             self._fcntl_module = fcntl
 
         def fcntl(self, fd: int, cmd: int, arg: int = 0) -> Union[int, bytes]:
-            return 0
+            return 0 if isinstance(arg, int) else arg
 
         def ioctl(self, fd: int, request: int, arg: int = 0,
                   mutate_flag: bool = True) -> Union[int, bytes]:
-            return 0
+            return 0 if isinstance(arg, int) else arg
 
         def flock(self, fd: int, operation: int) -> None:
             pass
@@ -5770,8 +5798,9 @@ class FakeFileOpen:
 
         newline, open_modes = self._handle_file_mode(mode, newline, open_modes)
 
-        # do not use the opener in pathlib, as it does nothing interesting
-        # but may not be patched under some circumstances (see #697)
+        # the pathlib opener is defined in a Path instance that may not be
+        # patched under some circumstances; as it just calls standard open(),
+        # we may ignore it, as it would not change the behavior
         if opener is not None and opener.__module__ != 'pathlib':
             # opener shall return a file descriptor, which will be handled
             # here as if directly passed

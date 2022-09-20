@@ -3,11 +3,28 @@ The released versions correspond to PyPi releases.
 
 ## Unreleased
 
+## [Version 4.7.0](https://pypi.python.org/pypi/pyfakefs/4.7.0) (2022-09-18)
+Changed handling of nested fixtures and bug fixes.
+
+### Changes
+* `fs` fixtures cannot be nested; any nested `fs` fixture (for example 
+  inside an `fs_session` or `fs_module` fixture) will just reference the outer
+  fixture (the behavior had been unexpected before)
+
 ### Fixes
 * reverted a performance optimization introduced in version 3.3.0 that
   caused hanging tests with installed torch (see [#693](../../issues/693))
 * do not use the build-in opener in `pathlib` as it may cause problems
   (see [#697](../../issues/697))
+* add support for path-like objects in `shutil.disk_usage`
+  (see [#699](../../issues/699))
+* do not advertise support for Python 3.6 in `setup.py`
+  (see [#707](../../issues/707))
+* return the expected type from `fcntl.ioctl` and `fcntl.fcntl` calls if `arg`
+  is of type `byte`; the call itself does nothing as before 
+* do not skip filesystem modules by name to allow using own modules with 
+  the same name (see [#707](../../issues/707))
+* add missing support for `os.renames` (see [#714](../../issues/714))
 
 ## [Version 4.6.3](https://pypi.python.org/pypi/pyfakefs/4.6.3) (2022-07-20)
 Another patch release that fixes a regression in version 4.6.
@@ -52,7 +69,7 @@ path behavior under Windows.
 ### Changes
 * Python 3.6 has reached its end of life on 2021/12/23 and is no
   longer officially supported by pyfakefs
-  ** `os.stat_float_times` has been removed in Python 3.7 and is therefore no 
+  * `os.stat_float_times` has been removed in Python 3.7 and is therefore no 
      longer supported
 * under Windows, the root path is now effectively `C:\` instead of `\`; a 
   path starting with `\` points to the current drive as in the real file 
