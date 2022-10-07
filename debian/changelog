@@ -1,3 +1,25 @@
+python3-pyfakefs (4.7.0-0debian1) jammy; urgency=low
+
+  * Changed handling of nested fixtures and bug fixes.
+  * `fs` fixtures cannot be nested; any nested `fs` fixture (for example
+  inside an `fs_session` or `fs_module` fixture) will just reference the outer
+  fixture (the behavior had been unexpected before)
+  * reverted a performance optimization introduced in version 3.3.0 that
+  caused hanging tests with installed torch (see #693)
+  * do not use the build-in opener in `pathlib` as it may cause problems
+  (see #697)
+  * add support for path-like objects in `shutil.disk_usage`
+  (see #699)
+  * do not advertise support for Python 3.6 in `setup.py`
+  (see #707)
+  * return the expected type from `fcntl.ioctl` and `fcntl.fcntl` calls if `arg`
+  is of type `byte`; the call itself does nothing as before
+  * do not skip filesystem modules by name to allow using own modules with
+  the same name (see #707)
+  * add missing support for `os.renames` (see #714)
+
+ -- Nicolas Hainaux <nh.techn@gmail.com>  Fri, 07 Oct 2022 21:21:34 +0200
+
 python3-pyfakefs (4.7.0-0ubuntu1~jammy) jammy; urgency=low
 
   * Changed handling of nested fixtures and bug fixes.
