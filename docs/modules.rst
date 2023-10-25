@@ -6,30 +6,30 @@ Public Modules and Classes
 
 Fake filesystem module
 ----------------------
-.. automodule:: pyfakefs.fake_filesystem
-    :members: set_uid, set_gid
+.. automodule:: pyfakefs.helpers
+    :members: get_uid, set_uid, get_gid, set_gid, reset_ids, is_root
 
 Fake filesystem classes
 -----------------------
 .. autoclass:: pyfakefs.fake_filesystem.FakeFilesystem
     :members: add_mount_point,
-        get_disk_usage, set_disk_usage,
+        get_disk_usage, set_disk_usage, change_disk_usage,
         add_real_directory, add_real_file, add_real_symlink, add_real_paths,
-        create_dir, create_file, create_symlink,
+        create_dir, create_file, create_symlink, create_link,
         get_object, pause, resume
 
-.. autoclass:: pyfakefs.fake_filesystem.FakeFile
+.. autoclass:: pyfakefs.fake_file.FakeFile
     :members: byte_contents, contents, set_contents,
         path, size, is_large_file
 
-.. autoclass:: pyfakefs.fake_filesystem.FakeDirectory
+.. autoclass:: pyfakefs.fake_file.FakeDirectory
     :members: contents, ordered_dirs, size, get_entry, remove_entry
 
 Unittest module classes
 -----------------------
 
 .. autoclass:: pyfakefs.fake_filesystem_unittest.TestCaseMixin
-    :members: fs, setUpPyfakefs, pause, resume
+    :members: fs, setUpPyfakefs, setUpClassPyfakefs, pause, resume
 
 .. autoclass:: pyfakefs.fake_filesystem_unittest.TestCase
 
@@ -43,13 +43,13 @@ Unittest module classes
 Faked module classes
 --------------------
 
-.. autoclass:: pyfakefs.fake_filesystem.FakeOsModule
+.. autoclass:: pyfakefs.fake_os.FakeOsModule
 
-.. autoclass:: pyfakefs.fake_filesystem.FakePathModule
+.. autoclass:: pyfakefs.fake_path.FakePathModule
 
-.. autoclass:: pyfakefs.fake_filesystem.FakeFileOpen
+.. autoclass:: pyfakefs.fake_open.FakeFileOpen
 
-.. autoclass:: pyfakefs.fake_filesystem.FakeIoModule
+.. autoclass:: pyfakefs.fake_io.FakeIoModule
 
 .. autoclass:: pyfakefs.fake_filesystem_shutil.FakeShutilModule
 

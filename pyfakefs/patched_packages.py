@@ -17,6 +17,7 @@ with pyfakefs.
 import sys
 
 try:
+    import pandas as pd
     import pandas.io.parsers as parsers
 except ImportError:
     parsers = None
@@ -31,35 +32,40 @@ try:
 except ImportError:
     locks = None
 
+# From pandas v 1.2 onwards the python fs functions are used even when the engine
+# selected is "c". This means that we don't explicitly have to change the engine.
+patch_pandas = parsers is not None and [int(v) for v in pd.__version__.split(".")] < [
+    1,
+    2,
+    0,
+]
+
 
 def get_modules_to_patch():
     modules_to_patch = {}
     if xlrd is not None:
-        modules_to_patch['xlrd'] = XLRDModule
+        modules_to_patch["xlrd"] = XLRDModule
     if locks is not None:
-        modules_to_patch['django.core.files.locks'] = FakeLocks
+        modules_to_patch["django.core.files.locks"] = FakeLocks
     return modules_to_patch
 
 
 def get_classes_to_patch():
     classes_to_patch = {}
-    if parsers is not None:
-        classes_to_patch[
-            'TextFileReader'
-        ] = 'pandas.io.parsers'
+    if patch_pandas:
+        classes_to_patch["TextFileReader"] = ["pandas.io.parsers"]
     return classes_to_patch
 
 
 def get_fake_module_classes():
     fake_module_classes = {}
-    if parsers is not None:
-        fake_module_classes[
-            'TextFileReader'
-        ] = FakeTextFileReader
+    if patch_pandas:
+        fake_module_classes["TextFileReader"] = FakeTextFileReader
     return fake_module_classes
 
 
 if xlrd is not None:
+
     class XLRDModule:
         """Patches the xlrd module, which is used as the default Excel file
         reader by pandas. Disables using memory mapped files, which are
@@ -68,24 +74,36 @@ if xlrd is not None:
         def __init__(self, _):
             self._xlrd_module = xlrd
 
-        def open_workbook(self, filename=None,
-                          logfile=sys.stdout,
-                          verbosity=0,
-                          use_mmap=False,
-                          file_contents=None,
-                          encoding_override=None,
-                          formatting_info=False,
-                          on_demand=False,
-                          ragged_rows=False):
+        def open_workbook(
+            self,
+            filename=None,
+            logfile=sys.stdout,
+            verbosity=0,
+            use_mmap=False,
+            file_contents=None,
+            encoding_override=None,
+            formatting_info=False,
+            on_demand=False,
+            ragged_rows=False,
+        ):
             return self._xlrd_module.open_workbook(
-                filename, logfile, verbosity, False, file_contents,
-                encoding_override, formatting_info, on_demand, ragged_rows)
+                filename,
+                logfile,
+                verbosity,
+                False,
+                file_contents,
+                encoding_override,
+                formatting_info,
+                on_demand,
+                ragged_rows,
+            )
 
         def __getattr__(self, name):
             """Forwards any unfaked calls to the standard xlrd module."""
             return getattr(self._xlrd_module, name)
 
-if parsers is not None:
+
+if patch_pandas:
     # we currently need to add fake modules for both the parser module and
     # the contained text reader - maybe this can be simplified
 
@@ -108,16 +126,19 @@ if parsers is not None:
 
         class TextFileReader(parsers.TextFileReader):
             def __init__(self, *args, **kwargs):
-                kwargs['engine'] = 'python'
+                kwargs["engine"] = "python"
                 super().__init__(*args, **kwargs)
 
         def __getattr__(self, name):
             """Forwards any unfaked calls to the standard xlrd module."""
             return getattr(self._parsers_module, name)
 
+
 if locks is not None:
+
     class FakeLocks:
         """django.core.files.locks uses low level OS functions, fake it."""
+
         _locks_module = locks
 
         def __init__(self, _):

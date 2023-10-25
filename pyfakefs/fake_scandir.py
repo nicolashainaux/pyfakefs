@@ -20,7 +20,7 @@ import os
 import sys
 
 from pyfakefs.extra_packages import use_scandir_package
-from pyfakefs.helpers import to_string
+from pyfakefs.helpers import to_string, make_string_path
 
 if sys.version_info >= (3, 6):
     BaseClass = os.PathLike
@@ -39,9 +39,9 @@ class DirEntry(BaseClass):
             filesystem: the fake filesystem used for implementation.
         """
         self._filesystem = filesystem
-        self.name = ''
-        self.path = ''
-        self._abspath = ''
+        self.name = ""
+        self.path = ""
+        self._abspath = ""
         self._inode = None
         self._islink = False
         self._isdir = False
@@ -110,8 +110,19 @@ class DirEntry(BaseClass):
         return self._statresult
 
     if sys.version_info >= (3, 6):
+
         def __fspath__(self):
             return self.path
+
+    if sys.version_info >= (3, 12):
+
+        def is_junction(self) -> bool:
+            """Return True if this entry is a junction.
+            Junctions are not a part of posix semantic."""
+            if not self._filesystem.is_windows_fs:
+                return False
+            file_object = self._filesystem.resolve(self._abspath)
+            return file_object.is_junction
 
 
 class ScanDirIter:
@@ -122,15 +133,17 @@ class ScanDirIter:
         self.filesystem = filesystem
         if isinstance(path, int):
             if not use_scandir_package and (
-                    sys.version_info < (3, 7) or
-                    self.filesystem.is_windows_fs):
+                sys.version_info < (3, 7) or self.filesystem.is_windows_fs
+            ):
                 raise NotImplementedError(
-                    'scandir does not support file descriptor '
-                    'path argument')
+                    "scandir does not support file descriptor " "path argument"
+                )
             self.abspath = self.filesystem.absnormpath(
-                self.filesystem.get_open_file(path).get_object().path)
-            self.path = ''
+                self.filesystem.get_open_file(path).get_object().path
+            )
+            self.path = ""
         else:
+            path = make_string_path(path)
             self.abspath = self.filesystem.absnormpath(path)
             self.path = to_string(path)
         entries = self.filesystem.confirmdir(self.abspath).entries
@@ -143,15 +156,14 @@ class ScanDirIter:
         entry = self.entry_iter.__next__()
         dir_entry = DirEntry(self.filesystem)
         dir_entry.name = entry
-        dir_entry.path = self.filesystem.joinpaths(self.path,
-                                                   dir_entry.name)
-        dir_entry._abspath = self.filesystem.joinpaths(self.abspath,
-                                                       dir_entry.name)
+        dir_entry.path = self.filesystem.joinpaths(self.path, dir_entry.name)
+        dir_entry._abspath = self.filesystem.joinpaths(self.abspath, dir_entry.name)
         dir_entry._isdir = self.filesystem.isdir(dir_entry._abspath)
         dir_entry._islink = self.filesystem.islink(dir_entry._abspath)
         return dir_entry
 
     if sys.version_info >= (3, 6):
+
         def __enter__(self):
             return self
 
@@ -162,7 +174,7 @@ class ScanDirIter:
             pass
 
 
-def scandir(filesystem, path=''):
+def scandir(filesystem, path=""):
     """Return an iterator of DirEntry objects corresponding to the entries
     in the directory given by path.
 
@@ -269,12 +281,12 @@ class FakeScanDirModule:
         """Return the list of patched function names. Used for patching
         functions imported from the module.
         """
-        return 'scandir', 'walk'
+        return "scandir", "walk"
 
     def __init__(self, filesystem):
         self.filesystem = filesystem
 
-    def scandir(self, path='.'):
+    def scandir(self, path="."):
         """Return an iterator of DirEntry objects corresponding to the entries
         in the directory given by path.
 

@@ -11,7 +11,7 @@ works by patching some file system related modules and functions, specifically:
 
 - most file system related functions in the ``os`` and ``os.path`` modules
 - the ``pathlib`` module
-- the build-in ``open`` function and ``io.open``
+- the built-in ``open`` function and ``io.open``
 - ``shutil.disk_usage``
 
 Other file system related modules work with ``pyfakefs``, because they use
@@ -48,31 +48,38 @@ reasons:
 A list of Python modules that are known to not work correctly with
 ``pyfakefs`` will be collected here:
 
-`multiprocessing`_ (build-in)
+`multiprocessing`_ (built-in)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 This module has several issues (related to points 1 and 3 above).
 Currently there are no plans to fix this, but this may change in case of
 sufficient demand.
 
-`subprocess`_ (build-in)
+`subprocess`_ (built-in)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 This has very similar problems to ``multiprocessing`` and cannot be used with
 ``pyfakefs`` to start a process. ``subprocess`` can either be mocked, if
 the process is not needed for the test, or patching can be paused to start
 a process if needed, and resumed afterwards
-(see `this issue <https://github.com/jmcgeheeiv/pyfakefs/issues/447>`__).
+(see `this issue <https://github.com/pytest-dev/pyfakefs/issues/447>`__).
 
 Modules that rely on ``subprocess`` or ``multiprocessing``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 This includes a number of modules that need to start other executables to
 function correctly. Examples that have shown this problem include `GitPython`_
-and `plumbum`_.
+and `plumbum`_. Calling ``find_library`` also uses ``subprocess`` and does not work in
+the fake filesystem.
+
+`sqlite3`_ (built-in)
+~~~~~~~~~~~~~~~~~~~~~~~~
+This is a database adapter written in C, which uses the database C API to access files.
+This (and similar database adapters) will not work with ``pyfakefs``, as it will always
+access the real filesystem.
 
 The `Pillow`_ Imaging Library
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 This library partly works with ``pyfakefs``, but it is known to not work at
 least if writing JPEG files
-(see `this issue <https://github.com/jmcgeheeiv/pyfakefs/issues/529>`__)
+(see `this issue <https://github.com/pytest-dev/pyfakefs/issues/529>`__)
 
 The `pandas`_ data analysis toolkit
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -112,8 +119,8 @@ There are at least the following kinds of deviations from the actual behavior:
 - unwanted deviations that we didn't notice--if you find any of these, please
   write an issue and we will try to fix it
 - behavior that depends on different OS versions and editions--as mentioned
-  in :ref:`limitations`, ``pyfakefs`` uses the TravisCI systems as reference
-  system and will not replicate all system-specific behavior
+  in :ref:`limitations`, ``pyfakefs`` uses the systems used for CI tests in
+  GitHub Actions as reference system and will not replicate all system-specific behavior
 - behavior that depends on low-level OS functionality that ``pyfakefs`` is not
   able to emulate; examples are the ``fcntl.ioctl`` and ``fcntl.fcntl``
   functions that are patched to do nothing
@@ -127,6 +134,26 @@ from configuration files. In these cases, you have to map the respective files
 or directories from the real into the fake filesystem as described in
 :ref:`real_fs_access`.
 
+If you are using Django, various dependencies may expect both the project
+directory and the ``site-packages`` installation to exist in the fake filesystem.
+
+Here's an example of how to add these using pytest::
+
+
+    import os
+    import django
+    import pytest
+
+    @pytest.fixture
+    def fake_fs(fs):
+        PROJECT_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        fs.add_real_paths(
+            [
+                PROJECT_BASE_DIR,
+                os.path.dirname(django.__file__),
+            ]
+        )
+        return fs
 
 OS temporary directories
 ------------------------
@@ -136,16 +163,23 @@ a temporary directory is required to ensure that ``tempfile`` works correctly,
 e.g., that ``tempfile.gettempdir()`` will return a valid value. This
 means that any newly created fake file system will always have either a
 directory named ``/tmp`` when running on Linux or Unix systems,
-``/var/folders/<hash>/T`` when running on MacOs, or
+``/var/folders/<hash>/T`` when running on macOS, or
 ``C:\Users\<user>\AppData\Local\Temp`` on Windows:
 
 .. code:: python
 
   import os
 
+
   def test_something(fs):
       # the temp directory is always present at test start
       assert len(os.listdir("/")) == 1
+
+Under macOS and linux, if the actual temp path is not `/tmp` (which is always the case
+under macOS), a symlink to the actual temp directory is additionally created as `/tmp`
+in the fake filesystem. Note that the file size of this link is ignored while
+calculating the fake filesystem size, so that the used size with an otherwise empty
+fake filesystem can always be assumed to be 0.
 
 
 User rights
@@ -157,7 +191,7 @@ can be changed.
 ``Pyfakefs`` has a rudimentary concept of user rights, which differentiates
 between root user (with the user id 0) and any other user. By default,
 ``pyfakefs`` assumes the user id of the current user, but you can change
-that using ``fake_filesystem.set_uid()`` in your setup. This allows to run
+that using ``pyfakefs.helpers.set_uid()`` in your setup. This allows to run
 tests as non-root user in a root user environment and vice verse.
 Another possibility to run tests as non-root user in a root user environment
 is the convenience argument :ref:`allow_root_user`:
@@ -165,6 +199,7 @@ is the convenience argument :ref:`allow_root_user`:
 .. code:: python
 
   from pyfakefs.fake_filesystem_unittest import TestCase
+
 
   class SomeTest(TestCase):
       def setUp(self):
@@ -191,15 +226,46 @@ passed before the ``mocker`` fixture to ensure this:
 
   def test_mock_open_incorrect(mocker, fs):
       # causes a recursion error
-      mocker.patch('builtins.open', mocker.mock_open(read_data="content"))
+      mocker.patch("builtins.open", mocker.mock_open(read_data="content"))
+
 
   def test_mock_open_correct(fs, mocker):
       # works correctly
-      mocker.patch('builtins.open', mocker.mock_open(read_data="content"))
+      mocker.patch("builtins.open", mocker.mock_open(read_data="content"))
+
+Pathlib.Path objects created outside of tests
+---------------------------------------------
+An pattern which is more often seen with the increased usage of ``pathlib`` is the
+creation of global ``pathlib.Path`` objects (instead of string paths) that are imported
+into the tests. As these objects are created in the real filesystem,
+they do not have the same attributes as fake ``pathlib.Path`` objects,
+and both will always compare as not equal,
+regardless of the path they point to:
+
+.. code:: python
+
+  import pathlib
+
+  # This Path was made in the real filesystem, before the test
+  # stands up the fake filesystem
+  FILE_PATH = pathlib.Path(__file__).parent / "file.csv"
+
+
+  def test_path_equality(fs):
+      # This Path was made after the fake filesystem is set up,
+      # and thus patching within pathlib is in effect
+      fake_file_path = pathlib.Path(str(FILE_PATH))
+
+      assert FILE_PATH == fake_file_path  # fails, compares different objects
+      assert str(FILE_PATH) == str(fake_file_path)  # succeeds, compares the actual paths
+
+Generally, mixing objects in the real filesystem and the fake filesystem
+is problematic and better avoided.
 
 
 .. _`multiprocessing`: https://docs.python.org/3/library/multiprocessing.html
 .. _`subprocess`: https://docs.python.org/3/library/subprocess.html
+.. _`sqlite3`: https://docs.python.org/3/library/sqlite3.html
 .. _`GitPython`: https://pypi.org/project/GitPython/
 .. _`plumbum`: https://pypi.org/project/plumbum/
 .. _`Pillow`: https://pypi.org/project/Pillow/

@@ -18,12 +18,11 @@ import warnings
 
 
 class DeprecatedProperty:
-
     def __get__(self, instance, cls):
-        warnings.warn("async is deprecated", DeprecationWarning)
-        warnings.warn("async will be replaced", FutureWarning)
+        warnings.warn("async is deprecated", DeprecationWarning, stacklevel=2)
+        warnings.warn("async will be replaced", FutureWarning, stacklevel=2)
         return instance
 
 
 class DeprecationTest:
-    locals()['async'] = DeprecatedProperty()
+    locals()["async"] = DeprecatedProperty()

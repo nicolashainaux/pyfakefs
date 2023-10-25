@@ -22,7 +22,7 @@ from io import open as io_open
 from os import path
 from os import stat
 from os import stat as my_stat
-from os.path import exists
+from os.path import exists, isfile, isdir, islink
 from os.path import exists as my_exists
 from pathlib import Path
 
@@ -61,6 +61,21 @@ def check_if_exists7(filepath):
     return pathlib.Path(filepath).exists()
 
 
+def check_if_isfile(filepath):
+    # tests patching `isfile` imported from os.path
+    return isfile(filepath)
+
+
+def check_if_isdir(filepath):
+    # tests patching `isdir` imported from os.path
+    return isdir(filepath)
+
+
+def check_if_islink(filepath):
+    # tests patching `islink` imported from os.path
+    return islink(filepath)
+
+
 def file_stat1(filepath):
     # tests patching `stat` imported from os
     return stat(filepath)
@@ -72,7 +87,7 @@ def file_stat2(filepath):
 
 
 def system_stat(filepath):
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         from nt import stat as system_stat
     else:
         from posix import stat as system_stat

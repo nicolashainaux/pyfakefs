@@ -30,16 +30,16 @@ import inspect
 class StubOutForTesting:
     """Sample Usage:
 
-       You want os.path.exists() to always return true during testing.
+    You want os.path.exists() to always return true during testing.
 
-       stubs = StubOutForTesting()
-       stubs.Set(os.path, 'exists', lambda x: 1)
-           ...
-       stubs.UnsetAll()
+    stubs = StubOutForTesting()
+    stubs.Set(os.path, 'exists', lambda x: 1)
+        ...
+    stubs.UnsetAll()
 
-       The above changes os.path.exists into a lambda that returns 1.    Once
-       the ... part of the code finishes, the UnsetAll() looks up the old value
-       of os.path.exists and restores it.
+    The above changes os.path.exists into a lambda that returns 1.    Once
+    the ... part of the code finishes, the UnsetAll() looks up the old value
+    of os.path.exists and restores it.
 
     """
 
@@ -72,8 +72,9 @@ class StubOutForTesting:
 
         Raises AttributeError if the attribute cannot be found.
         """
-        if (inspect.ismodule(obj) or
-                (not inspect.isclass(obj) and attr_name in obj.__dict__)):
+        if inspect.ismodule(obj) or (
+            not inspect.isclass(obj) and attr_name in obj.__dict__
+        ):
             orig_obj = obj
             orig_attr = getattr(obj, attr_name)
 
@@ -100,9 +101,8 @@ class StubOutForTesting:
         # Calling getattr() on a staticmethod transforms it to a 'normal'
         # function. We need to ensure that we put it back as a staticmethod.
         old_attribute = obj.__dict__.get(attr_name)
-        if (old_attribute is not None
-                and isinstance(old_attribute, staticmethod)):
-            orig_attr = staticmethod(orig_attr)
+        if old_attribute is not None and isinstance(old_attribute, staticmethod):
+            orig_attr = staticmethod(orig_attr)  # pytype: disable=not-callable
 
         self.stubs.append((orig_obj, attr_name, orig_attr))
         setattr(orig_obj, attr_name, new_attr)
@@ -157,6 +157,6 @@ class StubOutForTesting:
         # undone)
         self.cache.reverse()
 
-        for (parent, old_child, child_name) in self.cache:
+        for parent, old_child, child_name in self.cache:
             setattr(parent, child_name, old_child)
         self.cache = []
