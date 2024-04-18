@@ -1,3 +1,10 @@
+python3-pyfakefs (5.4.1-0ubuntu1~focal) focal; urgency=low
+
+  See https://github.com/pytest-dev/pyfakefs/releases for details
+
+ -- Nicolas Hainaux <nh.techn@gmail.com>  Thu, 18 Apr 2024 22:39:29 +0200
+
+
 python3-pyfakefs (5.4.1-0ubuntu2~jammy) jammy; urgency=low
 
   See https://github.com/pytest-dev/pyfakefs/releases for details
