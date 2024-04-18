@@ -44,6 +44,9 @@ class RealPathlibTestCase(fake_filesystem_unittest.TestCase, RealFsTestMixin):
         fake_filesystem_unittest.TestCase.__init__(self, methodName)
         RealFsTestMixin.__init__(self)
 
+    def used_pathlib(self):
+        return pathlib
+
     def setUp(self):
         RealFsTestMixin.setUp(self)
         self.filesystem = None
@@ -52,8 +55,8 @@ class RealPathlibTestCase(fake_filesystem_unittest.TestCase, RealFsTestMixin):
             self.setUpPyfakefs()
             self.filesystem = self.fs
             self.create_basepath()
-        self.pathlib = pathlib
-        self.path = pathlib.Path
+        self.pathlib = self.used_pathlib()
+        self.path = self.pathlib.Path
         self.os = os
         self.open = open
 
@@ -286,6 +289,7 @@ class RealPathlibPurePathTest(FakePathlibPurePathTest):
 class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
     def setUp(self):
         super(FakePathlibFileObjectPropertyTest, self).setUp()
+        self.umask = self.os.umask(0o022)
         self.file_path = self.make_path("home", "jane", "test.py")
         self.create_file(self.file_path, contents=b"a" * 100)
         self.create_dir(self.make_path("home", "john"))
@@ -303,6 +307,9 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
             self.make_path("broken_file_link"),
             self.make_path("home", "none", "test.py"),
         )
+
+    def tearDown(self):
+        self.os.umask(self.umask)
 
     def test_exists(self):
         self.skip_if_symlink_not_supported()
@@ -373,14 +380,15 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
         self.skip_if_symlink_not_supported()
         self.check_lstat(0)
 
-    @unittest.skipIf(is_windows, "Linux specific behavior")
+    @unittest.skipIf(is_windows, "POSIX specific behavior")
     def test_chmod(self):
-        self.check_linux_only()
+        self.check_posix_only()
         file_stat = self.os.stat(self.file_path)
-        self.assertEqual(file_stat.st_mode, stat.S_IFREG | 0o666)
+        self.assertEqual(file_stat.st_mode, stat.S_IFREG | 0o644)
         link_stat = self.os.lstat(self.file_link_path)
         # we get stat.S_IFLNK | 0o755 under MacOs
-        self.assertEqual(link_stat.st_mode, stat.S_IFLNK | 0o777)
+        mode = 0o755 if self.is_macos else 0o777
+        self.assertEqual(link_stat.st_mode, stat.S_IFLNK | mode)
 
     def test_lchmod(self):
         self.skip_if_symlink_not_supported()
@@ -391,7 +399,7 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
                 self.path(self.file_link_path).lchmod(0o444)
         else:
             self.path(self.file_link_path).lchmod(0o444)
-            self.assertEqual(file_stat.st_mode, stat.S_IFREG | 0o666)
+            self.assertEqual(file_stat.st_mode, stat.S_IFREG | 0o644)
             # the exact mode depends on OS and Python version
             self.assertEqual(link_stat.st_mode & 0o777700, stat.S_IFLNK | 0o700)
 
@@ -408,7 +416,7 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
                 self.path(self.file_link_path).chmod(0o444, follow_symlinks=False)
         else:
             self.path(self.file_link_path).chmod(0o444, follow_symlinks=False)
-            self.assertEqual(file_stat.st_mode, stat.S_IFREG | 0o666)
+            self.assertEqual(file_stat.st_mode, stat.S_IFREG | 0o644)
             # the exact mode depends on OS and Python version
             self.assertEqual(link_stat.st_mode & 0o777700, stat.S_IFLNK | 0o700)
 
@@ -449,6 +457,51 @@ class FakePathlibFileObjectPropertyTest(RealPathlibTestCase):
         else:
             path = str(list(it)[0])
             self.assertTrue(path.endswith("some_file"))
+
+    def test_iterdir_and_glob_without_exe_permission(self):
+        # regression test for #960
+        self.check_posix_only()
+        self.skip_root()
+        directory = self.path(self.make_path("testdir"))
+        file_path = directory / "file.txt"
+        self.create_file(file_path, contents="hey", perm=0o777)
+        directory.chmod(0o655)  # rw-r-xr-x
+        # We cannot create any files in the directory, because that requires
+        # searching it
+        another_file = self.path(self.make_path("file.txt"))
+        self.create_file(another_file, contents="hey")
+        with self.assertRaises(PermissionError):
+            self.os.link(another_file, directory / "link.txt")
+        # We can enumerate the directory using iterdir and glob:
+        assert len(list(directory.iterdir())) == 1
+        assert list(directory.iterdir())[0] == file_path
+        assert len(list(directory.glob("*.txt"))) == 1
+        assert list(directory.glob("*.txt"))[0] == file_path
+
+        # We cannot read files inside of the directory,
+        # even if we have read access to the file
+        with self.assertRaises(PermissionError):
+            file_path.stat()
+        with self.assertRaises(PermissionError):
+            file_path.read_text(encoding="utf8")
+
+    def test_iterdir_impossible_without_read_permission(self):
+        # regression test for #960
+        self.check_posix_only()
+        self.skip_root()
+        directory = self.path(self.make_path("testdir"))
+        file_path = directory / "file.txt"
+        self.create_file(file_path, contents="hey", perm=0o777)
+        directory.chmod(0o355)  # -wxr-xr-x
+
+        # We cannot enumerate the directory using iterdir:
+        with self.assertRaises(PermissionError):
+            list(directory.iterdir())
+        # glob does not find the file
+        assert len(list(directory.glob("*.txt"))) == 0
+        # we can access the file if we know the file name
+        assert file_path.stat().st_mode & 0o777 == 0o755
+        assert file_path.read_text(encoding="utf8") == "hey"
 
     def test_resolve_nonexisting_file(self):
         path = self.path(self.make_path("/path", "to", "file", "this can not exist"))
@@ -517,14 +570,14 @@ class FakePathlibPathFileOperationTest(RealPathlibTestCase):
     def test_open(self):
         self.create_dir(self.make_path("foo"))
         with self.assertRaises(OSError):
-            self.path(self.make_path("foo", "bar.txt")).open()
-        self.path(self.make_path("foo", "bar.txt")).open("w").close()
+            self.path(self.make_path("foo", "bar.txt")).open(encoding="utf8")
+        self.path(self.make_path("foo", "bar.txt")).open("w", encoding="utf8").close()
         self.assertTrue(self.os.path.exists(self.make_path("foo", "bar.txt")))
 
     def test_read_text(self):
         self.create_file(self.make_path("text_file"), contents="foo")
         file_path = self.path(self.make_path("text_file"))
-        self.assertEqual(file_path.read_text(), "foo")
+        self.assertEqual(file_path.read_text(encoding="utf8"), "foo")
 
     @unittest.skipIf(
         sys.version_info < (3, 12),
@@ -545,7 +598,7 @@ class FakePathlibPathFileOperationTest(RealPathlibTestCase):
     def test_write_text(self):
         path_name = self.make_path("text_file")
         file_path = self.path(path_name)
-        file_path.write_text(str("foo"))
+        file_path.write_text("foo", encoding="utf8")
         self.assertTrue(self.os.path.exists(path_name))
         self.check_contents(path_name, "foo")
 
@@ -559,13 +612,13 @@ class FakePathlibPathFileOperationTest(RealPathlibTestCase):
     @unittest.skipIf(sys.version_info < (3, 10), "newline argument new in Python 3.10")
     def test_write_with_newline_arg(self):
         path = self.path(self.make_path("some_file"))
-        path.write_text("1\r\n2\n3\r4", newline="")
+        path.write_text("1\r\n2\n3\r4", newline="", encoding="utf8")
         self.check_contents(path, b"1\r\n2\n3\r4")
-        path.write_text("1\r\n2\n3\r4", newline="\n")
+        path.write_text("1\r\n2\n3\r4", newline="\n", encoding="utf8")
         self.check_contents(path, b"1\r\n2\n3\r4")
-        path.write_text("1\r\n2\n3\r4", newline="\r\n")
+        path.write_text("1\r\n2\n3\r4", newline="\r\n", encoding="utf8")
         self.check_contents(path, b"1\r\r\n2\r\n3\r4")
-        path.write_text("1\r\n2\n3\r4", newline="\r")
+        path.write_text("1\r\n2\n3\r4", newline="\r", encoding="utf8")
         self.check_contents(path, b"1\r\r2\r3\r4")
 
     def test_read_bytes(self):
@@ -1138,6 +1191,18 @@ class FakePathlibUsageInOsFunctionsTest(RealPathlibTestCase):
             self.path(path).owner()
         with self.assertRaises(NotImplementedError):
             self.path(path).group()
+
+    def test_walk(self):
+        """Regression test for #915 - walk results shall be strings."""
+        base_dir = self.make_path("foo")
+        base_path = self.path(base_dir)
+        self.create_dir(base_path)
+        self.create_file(base_path / "1.txt")
+        self.create_file(base_path / "bar" / "2.txt")
+        result = list(step for step in self.os.walk(base_path))
+        assert len(result) == 2
+        assert result[0] == (base_dir, ["bar"], ["1.txt"])
+        assert result[1] == (self.os.path.join(base_dir, "bar"), [], ["2.txt"])
 
 
 class RealPathlibUsageInOsFunctionsTest(FakePathlibUsageInOsFunctionsTest):

@@ -14,22 +14,37 @@
 Provides patches for some commonly used modules that enable them to work
 with pyfakefs.
 """
+
 import sys
+from importlib import reload
 
 try:
     import pandas as pd
-    import pandas.io.parsers as parsers
+
+    try:
+        import pandas.io.parsers as parsers
+    except ImportError:
+        parsers = None
 except ImportError:
+    pd = None
     parsers = None
+
 
 try:
     import xlrd
 except ImportError:
     xlrd = None
 
+
 try:
-    from django.core.files import locks
+    import django
+
+    try:
+        from django.core.files import locks
+    except ImportError:
+        locks = None
 except ImportError:
+    django = None
     locks = None
 
 # From pandas v 1.2 onwards the python fs functions are used even when the engine
@@ -55,6 +70,24 @@ def get_classes_to_patch():
     if patch_pandas:
         classes_to_patch["TextFileReader"] = ["pandas.io.parsers"]
     return classes_to_patch
+
+
+def reload_handler(name):
+    if name in sys.modules:
+        reload(sys.modules[name])
+    return True
+
+
+def get_cleanup_handlers():
+    handlers = {}
+    if pd is not None:
+        handlers["pandas.core.arrays.arrow.extension_types"] = (
+            handle_extension_type_cleanup
+        )
+    if django is not None:
+        for module_name in django_view_modules():
+            handlers[module_name] = lambda name=module_name: reload_handler(name)
+    return handlers
 
 
 def get_fake_module_classes():
@@ -134,6 +167,23 @@ if patch_pandas:
             return getattr(self._parsers_module, name)
 
 
+if pd is not None:
+
+    def handle_extension_type_cleanup(_name):
+        # the module registers two extension types on load
+        # on reload it raises if the extensions have not been unregistered before
+        try:
+            import pyarrow
+
+            # the code to register these types has been in the module
+            # since it was created (in pandas 1.5)
+            pyarrow.unregister_extension_type("pandas.interval")
+            pyarrow.unregister_extension_type("pandas.period")
+        except ImportError:
+            pass
+        return False
+
+
 if locks is not None:
 
     class FakeLocks:
@@ -154,3 +204,31 @@ if locks is not None:
 
         def __getattr__(self, name):
             return getattr(self._locks_module, name)
+
+
+if django is not None:
+
+    def get_all_view_modules(urlpatterns, modules=None):
+        if modules is None:
+            modules = set()
+        for pattern in urlpatterns:
+            if hasattr(pattern, "url_patterns"):
+                get_all_view_modules(pattern.url_patterns, modules=modules)
+            else:
+                if hasattr(pattern.callback, "cls"):
+                    view = pattern.callback.cls
+                elif hasattr(pattern.callback, "view_class"):
+                    view = pattern.callback.view_class
+                else:
+                    view = pattern.callback
+                modules.add(view.__module__)
+        return modules
+
+    def django_view_modules():
+        try:
+            all_urlpatterns = __import__(
+                django.conf.settings.ROOT_URLCONF
+            ).urls.urlpatterns
+            return get_all_view_modules(all_urlpatterns)
+        except Exception:
+            return set()

@@ -11,6 +11,7 @@
 # limitations under the License.
 
 """Helper classes use for fake file system implementation."""
+
 import io
 import locale
 import os
@@ -18,6 +19,7 @@ import platform
 import stat
 import sys
 import time
+from collections import namedtuple
 from copy import copy
 from stat import S_IFLNK
 from typing import Union, Optional, Any, AnyStr, overload, cast
@@ -35,6 +37,11 @@ PERM_EXE = 0o100  # Execute permission bit.
 PERM_DEF = 0o777  # Default permission bits.
 PERM_DEF_FILE = 0o666  # Default permission bits (regular file)
 PERM_ALL = 0o7777  # All permission bits.
+
+_OpenModes = namedtuple(
+    "_OpenModes",
+    "must_exist can_read can_write truncate append must_not_exist",
+)
 
 if sys.platform == "win32":
     USER_ID = 1
@@ -109,14 +116,18 @@ def is_unicode_string(val: Any) -> bool:
     return hasattr(val, "encode")
 
 
-@overload
-def make_string_path(dir_name: AnyStr) -> AnyStr:
-    ...
+def get_locale_encoding():
+    if sys.version_info >= (3, 11):
+        return locale.getencoding()
+    return locale.getpreferredencoding(False)
 
 
 @overload
-def make_string_path(dir_name: os.PathLike) -> str:
-    ...
+def make_string_path(dir_name: AnyStr) -> AnyStr: ...
+
+
+@overload
+def make_string_path(dir_name: os.PathLike) -> str: ...
 
 
 def make_string_path(dir_name: AnyPath) -> AnyStr:  # type: ignore[type-var]
@@ -127,7 +138,7 @@ def to_string(path: Union[AnyStr, Union[str, bytes]]) -> str:
     """Return the string representation of a byte string using the preferred
     encoding, or the string itself if path is a str."""
     if isinstance(path, bytes):
-        return path.decode(locale.getpreferredencoding(False))
+        return path.decode(get_locale_encoding())
     return path
 
 
@@ -135,7 +146,7 @@ def to_bytes(path: Union[AnyStr, Union[str, bytes]]) -> bytes:
     """Return the bytes representation of a string using the preferred
     encoding, or the byte string itself if path is a byte string."""
     if isinstance(path, str):
-        return bytes(path, locale.getpreferredencoding(False))
+        return bytes(path, get_locale_encoding())
     return path
 
 
@@ -158,18 +169,15 @@ def now():
 
 
 @overload
-def matching_string(matched: bytes, string: AnyStr) -> bytes:
-    ...
+def matching_string(matched: bytes, string: AnyStr) -> bytes: ...
 
 
 @overload
-def matching_string(matched: str, string: AnyStr) -> str:
-    ...
+def matching_string(matched: str, string: AnyStr) -> str: ...
 
 
 @overload
-def matching_string(matched: AnyStr, string: None) -> None:
-    ...
+def matching_string(matched: AnyStr, string: None) -> None: ...
 
 
 def matching_string(  # type: ignore[misc]
@@ -181,7 +189,7 @@ def matching_string(  # type: ignore[misc]
     if string is None:
         return string
     if isinstance(matched, bytes) and isinstance(string, str):
-        return string.encode(locale.getpreferredencoding(False))
+        return string.encode(get_locale_encoding())
     return string  # pytype: disable=bad-return-type
 
 

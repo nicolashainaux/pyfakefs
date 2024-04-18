@@ -21,8 +21,6 @@ import stat
 import sys
 import unittest
 
-from pyfakefs.helpers import IN_DOCKER, IS_PYPY, get_uid, get_gid
-
 from pyfakefs import fake_filesystem, fake_os, fake_open, fake_file
 from pyfakefs.fake_filesystem import (
     FakeFileOpen,
@@ -30,21 +28,25 @@ from pyfakefs.fake_filesystem import (
     set_uid,
     set_gid,
 )
-from pyfakefs.extra_packages import (
-    use_scandir,
-    use_scandir_package,
-    use_builtin_scandir,
-)
-
+from pyfakefs.helpers import IN_DOCKER, IS_PYPY, get_uid, get_gid, reset_ids
 from pyfakefs.tests.test_utils import TestCase, RealFsTestCase
 
 
 class FakeOsModuleTestBase(RealFsTestCase):
+    def setUp(self):
+        super().setUp()
+        self.umask = self.os.umask(0o022)
+
+    def tearDown(self):
+        self.os.umask(self.umask)
+
     def createTestFile(self, path):
         self.create_file(path)
         self.assertTrue(self.os.path.exists(path))
         st = self.os.stat(path)
-        self.assertEqual(0o666, stat.S_IMODE(st.st_mode))
+        # under Windows, the umask has no effect
+        mode = 0o666 if self.is_windows_fs else 0o0644
+        self.assertEqual(mode, stat.S_IMODE(st.st_mode))
         self.assertTrue(st.st_mode & stat.S_IFREG)
         self.assertFalse(st.st_mode & stat.S_IFDIR)
 
@@ -52,14 +54,15 @@ class FakeOsModuleTestBase(RealFsTestCase):
         self.create_dir(path)
         self.assertTrue(self.os.path.exists(path))
         st = self.os.stat(path)
-        self.assertEqual(0o777, stat.S_IMODE(st.st_mode))
+        mode = 0o777 if self.is_windows_fs else 0o755
+        self.assertEqual(mode, stat.S_IMODE(st.st_mode))
         self.assertFalse(st.st_mode & stat.S_IFREG)
         self.assertTrue(st.st_mode & stat.S_IFDIR)
 
 
 class FakeOsModuleTest(FakeOsModuleTestBase):
     def setUp(self):
-        super(FakeOsModuleTest, self).setUp()
+        super().setUp()
         self.rwx = self.os.R_OK | self.os.W_OK | self.os.X_OK
         self.rw = self.os.R_OK | self.os.W_OK
 
@@ -178,9 +181,9 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
     def test_fdopen(self):
         file_path1 = self.make_path("some_file1")
         self.create_file(file_path1, contents="contents here1")
-        with self.open(file_path1, "r") as fake_file1:
+        with self.open(file_path1, "r", encoding="utf8") as fake_file1:
             fileno = fake_file1.fileno()
-            fake_file2 = self.os.fdopen(fileno)
+            fake_file2 = self.os.fdopen(fileno, encoding="utf8")
             self.assertNotEqual(fake_file2, fake_file1)
 
         with self.assertRaises(TypeError):
@@ -190,7 +193,8 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
 
     def test_out_of_range_fdopen(self):
         # test some file descriptor that is clearly out of range
-        self.assert_raises_os_error(errno.EBADF, self.os.fdopen, 500)
+        kwargs = {"encoding": "utf8"}
+        self.assert_raises_os_error(errno.EBADF, self.os.fdopen, 500, **kwargs)
 
     def test_closed_file_descriptor(self):
         first_path = self.make_path("some_file1")
@@ -200,9 +204,9 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.create_file(second_path, contents="contents here2")
         self.create_file(third_path, contents="contents here3")
 
-        fake_file1 = self.open(first_path, "r")
-        fake_file2 = self.open(second_path, "r")
-        fake_file3 = self.open(third_path, "r")
+        fake_file1 = self.open(first_path, "r", encoding="utf8")
+        fake_file2 = self.open(second_path, "r", encoding="utf8")
+        fake_file3 = self.open(third_path, "r", encoding="utf8")
         fileno1 = fake_file1.fileno()
         fileno2 = fake_file2.fileno()
         fileno3 = fake_file3.fileno()
@@ -212,34 +216,64 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assertEqual(fileno1, fake_file1.fileno())
         self.assertEqual(fileno3, fake_file3.fileno())
 
-        with self.os.fdopen(fileno1) as f:
+        with self.os.fdopen(fileno1, encoding="utf8") as f:
             self.assertFalse(f is fake_file1)
-        with self.os.fdopen(fileno3) as f:
+        with self.os.fdopen(fileno3, encoding="utf8") as f:
             self.assertFalse(f is fake_file3)
-        self.assert_raises_os_error(errno.EBADF, self.os.fdopen, fileno2)
+        kwargs = {"encoding": "utf8"}
+        self.assert_raises_os_error(errno.EBADF, self.os.fdopen, fileno2, **kwargs)
 
-    def test_fdopen_mode(self):
-        self.skip_real_fs()
-        file_path1 = self.make_path("some_file1")
-        self.create_file(file_path1, contents="contents here1")
-        self.os.chmod(file_path1, (stat.S_IFREG | 0o666) ^ stat.S_IWRITE)
+    def test_fdopen_twice(self):
+        # regression test for #997
+        file_path = self.make_path("some_file1")
+        self.create_file(file_path, contents="contents here1")
+        fake_file = self.open(file_path, "r", encoding="utf8")
+        fd = fake_file.fileno()
+        # note: we need to assign the files to objects,
+        # otherwise the file will be closed immediately in the CPython implementation
+        # note that this case is not (and will probably not be) handled in pyfakefs
+        file1 = self.open(fd, encoding="utf8")  # noqa: F841
+        file2 = self.open(fd, encoding="utf8")  # noqa: F841
 
-        fake_file1 = self.open(file_path1, "r")
-        fileno1 = fake_file1.fileno()
-        self.os.fdopen(fileno1)
-        self.os.fdopen(fileno1, "r")
-        if not is_root():
-            with self.assertRaises(OSError):
-                self.os.fdopen(fileno1, "w")
-        else:
-            self.os.fdopen(fileno1, "w")
-            self.os.close(fileno1)
+        self.os.close(fd)
+
+    def test_open_fd_write_mode_for_ro_file(self):
+        # Create a writable file handle to a read-only file, see #967
+        file_path = self.make_path("file.txt")
+        fd = self.os.open(file_path, os.O_CREAT | os.O_WRONLY, 0o555)
+        with self.open(fd, "w", encoding="utf8") as out:
+            out.write("hey")
+        with self.open(file_path, encoding="utf8") as f:
+            assert f.read() == "hey"
+        self.os.chmod(file_path, 0o655)
+
+    def test_open_fd_read_mode_for_ro_file(self):
+        # Create a read-only handle to a read-only file, see #967
+        file_path = self.make_path("file.txt")
+        fd = self.os.open(file_path, os.O_CREAT | os.O_RDONLY, 0x555)
+        # Attempt to open a write stream to the underlying file
+        out = self.open(fd, "wb")
+        out.flush()  # Does not fail: The buffer is empty, so no write()
+
+        # Fails: Tries to flush a non-empty buffer
+        out.write(b"a")  # file.write() may fail by an implicit flush!
+        with self.assertRaises(OSError) as cm:
+            out.flush()
+        assert cm.exception.errno == errno.EBADF
+
+        # Fails: Tries to flush() again
+        with self.assertRaises(OSError) as cm:
+            out.close()
+        assert cm.exception.errno == errno.EBADF
+
+        out.close()  # Okay: The file is already closed
+        self.os.chmod(file_path, 0o655)
 
     def test_fstat(self):
         directory = self.make_path("xyzzy")
         file_path = self.os.path.join(directory, "plugh")
         self.create_file(file_path, contents="ABCDE")
-        with self.open(file_path) as file_obj:
+        with self.open(file_path, encoding="utf8") as file_obj:
             fileno = file_obj.fileno()
             self.assertTrue(stat.S_IFREG & self.os.fstat(fileno)[stat.ST_MODE])
             self.assertTrue(stat.S_IFREG & self.os.fstat(fileno).st_mode)
@@ -307,7 +341,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         file_path = self.make_path("foo", "bar")
         self.create_file(file_path)
 
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertTrue(stat.S_IFREG & self.os.stat(f.filedes)[stat.ST_MODE])
 
     def test_stat_no_follow_symlinks_posix(self):
@@ -528,7 +562,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.create_file(file_path, contents=file_contents)
         self.create_symlink(link_path, file_path)
 
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertEqual(len(file_contents), self.os.lstat(f.filedes)[stat.ST_SIZE])
 
     def test_stat_non_existent_file(self):
@@ -564,6 +598,44 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
     def test_open_raises_with_trailing_separator_windows(self):
         self.check_windows_only()
         self.check_open_raises_with_trailing_separator(errno.EINVAL)
+
+    @unittest.skipIf(not hasattr(os, "O_DIRECTORY"), "opening directory not supported")
+    def test_open_with_o_directory(self):
+        self.check_posix_only()
+        with self.assertRaises(FileNotFoundError):
+            self.os.open("bogus", os.O_RDONLY | os.O_DIRECTORY)
+        file_path = self.make_path("file.txt")
+        self.create_file(file_path, contents="foo")
+        with self.assertRaises(NotADirectoryError):
+            self.os.open(file_path, os.O_RDONLY | os.O_DIRECTORY)
+        dir_path = self.make_path("dir")
+        self.create_dir(dir_path)
+        with self.assertRaises(IsADirectoryError):
+            self.os.open(dir_path, os.O_RDWR | os.O_DIRECTORY)
+
+    @unittest.skipIf(not hasattr(os, "O_NOFOLLOW"), "NOFOLLOW attribute not supported")
+    def test_open_nofollow_symlink_raises(self):
+        self.skip_if_symlink_not_supported()
+        file_path = self.make_path("file.txt")
+        self.create_file(file_path, contents="foo")
+        link_path = self.make_path("link")
+        self.create_symlink(link_path, file_path)
+        with self.assertRaises(OSError) as cm:
+            self.os.open(link_path, os.O_RDONLY | os.O_NOFOLLOW)
+        assert cm.exception.errno == errno.ELOOP
+
+    @unittest.skipIf(not hasattr(os, "O_NOFOLLOW"), "NOFOLLOW attribute not supported")
+    def test_open_nofollow_symlink_as_parent_works(self):
+        self.skip_if_symlink_not_supported()
+        dir_path = self.make_path("dir")
+        self.create_dir(dir_path)
+        link_path = self.make_path("link")
+        self.create_symlink(link_path, dir_path)
+        file_path = self.os.path.join(link_path, "file.txt")
+        self.create_file(file_path, contents="foo")
+        fd = self.os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW)
+        self.assertGreater(fd, 0)
+        self.os.close(fd)
 
     def test_lexists_with_trailing_separator_linux_windows(self):
         self.check_linux_and_windows()
@@ -867,7 +939,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_windows_only()
         path = self.make_path("foo", "bar")
         self.create_file(path)
-        with self.open(path, "r"):
+        with self.open(path, "r", encoding="utf8"):
             self.assert_raises_os_error(errno.EACCES, self.os.remove, path)
         self.assertTrue(self.os.path.exists(path))
 
@@ -875,7 +947,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_posix_only()
         path = self.make_path("foo", "bar")
         self.create_file(path)
-        self.open(path, "r")
+        self.open(path, "r", encoding="utf8")
         self.os.remove(path)
         self.assertFalse(self.os.path.exists(path))
 
@@ -1296,8 +1368,8 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
 
     def check_append_mode_tell_after_truncate(self, tell_result):
         file_path = self.make_path("baz")
-        with self.open(file_path, "w") as f0:
-            with self.open(file_path, "a") as f1:
+        with self.open(file_path, "w", encoding="utf8") as f0:
+            with self.open(file_path, "a", encoding="utf8") as f1:
                 f1.write("abcde")
                 f0.seek(2)
                 f0.truncate()
@@ -1318,14 +1390,14 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
     def test_tell_after_seek_in_append_mode(self):
         # Regression test for #363
         file_path = self.make_path("foo")
-        with self.open(file_path, "a") as f:
+        with self.open(file_path, "a", encoding="utf8") as f:
             f.seek(1)
             self.assertEqual(1, f.tell())
 
     def test_tell_after_seekback_in_append_mode(self):
         # Regression test for #414
         file_path = self.make_path("foo")
-        with self.open(file_path, "a") as f:
+        with self.open(file_path, "a", encoding="utf8") as f:
             f.write("aa")
             f.seek(1)
             self.assertEqual(1, f.tell())
@@ -1816,6 +1888,14 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assert_raises_os_error(errno.ENOENT, self.os.makedirs, "", exist_ok=False)
         self.assert_raises_os_error(errno.ENOENT, self.os.makedirs, "", exist_ok=True)
 
+    def test_makedirs_with_relative_paths(self):
+        # regression test for #987
+        path = self.make_path("base", "foo", "..", "bar")
+        self.os.makedirs(path)
+        self.assertTrue(self.os.path.isdir(self.make_path("base", "bar")))
+        self.assertTrue(self.os.path.isdir(self.make_path("base", "foo")))
+        self.assertFalse(self.os.path.isdir(self.make_path("base", "foo", "bar")))
+
     # test fsync and fdatasync
     def test_fsync_raises_on_non_int(self):
         with self.assertRaises(TypeError):
@@ -1838,7 +1918,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_posix_only()
         test_file_path = self.make_path("test_file")
         self.create_file(test_file_path, contents="dummy file contents")
-        with self.open(test_file_path, "r") as test_file:
+        with self.open(test_file_path, "r", encoding="utf8") as test_file:
             test_fd = test_file.fileno()
             # Test that this doesn't raise anything
             self.os.fsync(test_fd)
@@ -1849,13 +1929,13 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_windows_only()
         test_file_path = self.make_path("test_file")
         self.create_file(test_file_path, contents="dummy file contents")
-        with self.open(test_file_path, "r+") as test_file:
+        with self.open(test_file_path, "r+", encoding="utf8") as test_file:
             test_fd = test_file.fileno()
             # Test that this doesn't raise anything
             self.os.fsync(test_fd)
             # And just for sanity, double-check that this still raises
             self.assert_raises_os_error(errno.EBADF, self.os.fsync, test_fd + 500)
-        with self.open(test_file_path, "r") as test_file:
+        with self.open(test_file_path, "r", encoding="utf8") as test_file:
             test_fd = test_file.fileno()
             self.assert_raises_os_error(errno.EBADF, self.os.fsync, test_fd)
 
@@ -1864,7 +1944,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_linux_only()
         test_file_path = self.make_path("test_file")
         self.create_file(test_file_path, contents="dummy file contents")
-        test_file = self.open(test_file_path, "r")
+        test_file = self.open(test_file_path, "r", encoding="utf8")
         test_fd = test_file.fileno()
         # Test that this doesn't raise anything
         self.os.fdatasync(test_fd)
@@ -1986,7 +2066,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         path = self.make_path("some_file")
         self.createTestFile(path)
 
-        with self.open(path) as f:
+        with self.open(path, encoding="utf8") as f:
             self.os.chmod(f.filedes, 0o6543)
             st = self.os.stat(path)
             self.assert_mode_equal(0o6543, st.st_mode)
@@ -2017,7 +2097,8 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         else:
             self.os.chmod(link_path, 0o6543, follow_symlinks=False)
             st = self.os.stat(link_path)
-            self.assert_mode_equal(0o666, st.st_mode)
+            mode = 0o644 if self.is_macos else 0o666
+            self.assert_mode_equal(mode, st.st_mode)
             st = self.os.stat(link_path, follow_symlinks=False)
             self.assert_mode_equal(0o6543, st.st_mode)
 
@@ -2032,7 +2113,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.os.lchmod(link_path, 0o6543)
 
         st = self.os.stat(link_path)
-        self.assert_mode_equal(0o666, st.st_mode)
+        self.assert_mode_equal(0o644, st.st_mode)
         st = self.os.lstat(link_path)
         self.assert_mode_equal(0o6543, st.st_mode)
 
@@ -2090,7 +2171,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         file_path = self.make_path("foo", "bar")
         self.create_file(file_path)
 
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.os.chown(f.filedes, 100, 101)
             st = self.os.stat(file_path)
             self.assertEqual(st[stat.ST_UID], 100)
@@ -2138,6 +2219,27 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         file_path = self.make_path("some_file")
         self.assertFalse(self.os.path.exists(file_path))
         self.assert_raises_os_error(errno.ENOENT, self.os.chown, file_path, 100, 100)
+
+    def test_fail_add_entry_to_readonly_dir(self):
+        # regression test for #959
+        self.check_posix_only()
+        self.skip_real_fs()  # cannot change owner to root
+        if is_root():
+            self.skipTest("Non-root test only")
+
+        # create directory owned by root with permissions 0o755 (rwxr-xr-x)
+        ro_dir = self.make_path("readonly-dir")
+        self.create_dir(ro_dir, perm=0o755)
+        self.os.chown(ro_dir, 0, 0)
+
+        # adding a new entry to the readonly subdirectory should fail
+        with self.assertRaises(PermissionError):
+            with self.open(f"{ro_dir}/file.txt", "w", encoding="utf8"):
+                pass
+        file_path = self.make_path("file.txt")
+        self.create_file(file_path)
+        with self.assertRaises(PermissionError):
+            self.os.link(file_path, self.os.path.join(ro_dir, "file.txt"))
 
     def test_classify_directory_contents(self):
         """Directory classification should work correctly."""
@@ -2477,7 +2579,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.skip_if_symlink_not_supported()
         file_path = self.make_path("foo")
         link_path = self.make_path("link")
-        with self.open(file_path, "w"):
+        with self.open(file_path, "w", encoding="utf8"):
             self.assert_raises_os_error(
                 error, self.os.link, file_path + self.os.sep, link_path
             )
@@ -2495,7 +2597,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_posix_only()
         path0 = self.make_path("foo") + self.os.sep
         path1 = self.make_path("bar")
-        with self.open(path1, "w"):
+        with self.open(path1, "w", encoding="utf8"):
             self.assert_raises_os_error(errno.ENOENT, self.os.link, path1, path0)
 
     def test_link_to_path_ending_with_sep_windows(self):
@@ -2503,14 +2605,14 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.skip_if_symlink_not_supported()
         path0 = self.make_path("foo") + self.os.sep
         path1 = self.make_path("bar")
-        with self.open(path1, "w"):
+        with self.open(path1, "w", encoding="utf8"):
             self.os.link(path1, path0)
             self.assertTrue(self.os.path.exists(path1))
 
     def check_rename_to_path_ending_with_sep(self, error):
         # Regression tests for #400
         file_path = self.make_path("foo")
-        with self.open(file_path, "w"):
+        with self.open(file_path, "w", encoding="utf8"):
             self.assert_raises_os_error(
                 error, self.os.rename, file_path + self.os.sep, file_path
             )
@@ -2601,7 +2703,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.os.unlink(file1_path)
         # assert that second file exists, and its contents are the same
         self.assertTrue(self.os.path.exists(file2_path))
-        with self.open(file2_path) as f:
+        with self.open(file2_path, encoding="utf8") as f:
             self.assertEqual(f.read(), contents1)
 
     def test_link_update(self):
@@ -2615,13 +2717,13 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.create_file(file1_path, contents=contents1)
         self.os.link(file1_path, file2_path)
         # assert that the second file contains contents1
-        with self.open(file2_path) as f:
+        with self.open(file2_path, encoding="utf8") as f:
             self.assertEqual(f.read(), contents1)
         # update the first file
-        with self.open(file1_path, "w") as f:
+        with self.open(file1_path, "w", encoding="utf8") as f:
             f.write(contents2)
         # assert that second file contains contents2
-        with self.open(file2_path) as f:
+        with self.open(file2_path, encoding="utf8") as f:
             self.assertEqual(f.read(), contents2)
 
     def test_link_non_existent_parent(self):
@@ -2684,6 +2786,29 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.os.unlink(file1_path)
         self.assertEqual(self.os.stat(file2_path).st_nlink, 1)
 
+    @unittest.skipIf(IS_PYPY, "follow_symlinks not supported in PyPi")
+    def test_link_no_follow_symlink(self):
+        self.skip_if_symlink_not_supported()
+        target_path = self.make_path("target_path")
+        self.create_file(target_path, contents="foo")
+        symlink_path = self.make_path("symlink_to_file")
+        self.create_symlink(symlink_path, target_path)
+        link_path = self.make_path("link_to_symlink")
+        self.os.link(symlink_path, link_path, follow_symlinks=False)
+        self.assertTrue(self.os.path.islink(link_path))
+
+    @unittest.skipIf(not IS_PYPY, "follow_symlinks only not supported in PyPi")
+    def test_link_follow_symlink_not_supported_inPypy(self):
+        self.skip_if_symlink_not_supported()
+        target_path = self.make_path("target_path")
+        self.create_file(target_path, contents="foo")
+        symlink_path = self.make_path("symlink_to_file")
+        self.create_symlink(symlink_path, target_path)
+        link_path = self.make_path("link_to_symlink")
+        with self.assertRaises(OSError) as cm:
+            self.os.link(symlink_path, link_path, follow_symlinks=False)
+        self.assertEqual(errno.EINVAL, cm.exception.errno)
+
     def test_nlink_for_directories(self):
         self.skip_real_fs()
         self.create_dir(self.make_path("foo", "bar"))
@@ -2698,9 +2823,9 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
 
     def test_umask(self):
         self.check_posix_only()
-        umask = os.umask(0o22)
-        os.umask(umask)
-        self.assertEqual(umask, self.os.umask(0o22))
+        umask = self.os.umask(0o22)
+        self.assertEqual(umask, self.os.umask(0o12))
+        self.os.umask(umask)
 
     def test_mkdir_umask_applied(self):
         """mkdir creates a directory with umask applied."""
@@ -2717,7 +2842,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
     def test_makedirs_umask_applied(self):
         """makedirs creates a directories with umask applied."""
         self.check_posix_only()
-        self.os.umask(0o22)
+        umask = self.os.umask(0o22)
         self.os.makedirs(self.make_path("p1", "dir1"))
         self.assert_mode_equal(0o755, self.os.stat(self.make_path("p1")).st_mode)
         self.assert_mode_equal(
@@ -2729,6 +2854,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.assert_mode_equal(
             0o710, self.os.stat(self.make_path("p2", "dir2")).st_mode
         )
+        self.os.umask(umask)
 
     def test_mknod_umask_applied(self):
         """mkdir creates a device with umask applied."""
@@ -2748,11 +2874,11 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         self.check_posix_only()
         self.os.umask(0o22)
         file1 = self.make_path("file1")
-        self.open(file1, "w").close()
+        self.open(file1, "w", encoding="utf8").close()
         self.assert_mode_equal(0o644, self.os.stat(file1).st_mode)
         self.os.umask(0o27)
         file2 = self.make_path("file2")
-        self.open(file2, "w").close()
+        self.open(file2, "w", encoding="utf8").close()
         self.assert_mode_equal(0o640, self.os.stat(file2).st_mode)
 
     def test_open_pipe(self):
@@ -2794,7 +2920,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             fds.append(self.os.open(path, os.O_CREAT))
         file_path = self.make_path("file.txt")
         self.create_file(file_path)
-        with self.open(file_path):
+        with self.open(file_path, encoding="utf8"):
             read_fd, write_fd = self.os.pipe()
             with self.open(write_fd, "wb") as f:
                 self.assertEqual(4, f.write(b"test"))
@@ -2824,7 +2950,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         file_path = self.make_path("foo", "bar")
         self.create_file(file_path, contents="012345678901234567")
         self.os.truncate(file_path, 10)
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertEqual("0123456789", f.read())
 
     def test_truncate_non_existing(self):
@@ -2836,7 +2962,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         fd = self.os.open(file_path, os.O_RDWR)
         self.os.truncate(fd, 20)
         self.assertEqual(20, self.os.stat(file_path).st_size)
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertEqual("0123456789" + "\0" * 10, f.read())
 
     def test_truncate_with_fd(self):
@@ -2849,7 +2975,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         fd = self.os.open(file_path, os.O_RDWR)
         self.os.truncate(fd, 10)
         self.assertEqual(10, self.os.stat(file_path).st_size)
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertEqual("0123456789", f.read())
 
     def test_ftruncate(self):
@@ -2863,7 +2989,7 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
         fd = self.os.open(file_path, os.O_RDWR)
         self.os.truncate(fd, 10)
         self.assertEqual(10, self.os.stat(file_path).st_size)
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertEqual("0123456789", f.read())
 
     def test_capabilities(self):
@@ -2881,6 +3007,65 @@ class FakeOsModuleTest(FakeOsModuleTestBase):
             os.stat in os.supports_effective_ids,
         )
 
+    def test_dup(self):
+        with self.assertRaises(OSError) as cm:
+            self.os.dup(500)
+        self.assertEqual(errno.EBADF, cm.exception.errno)
+        file_path = self.make_path("test.txt")
+        self.create_file(file_path, contents="heythere")
+        fd1 = self.os.open(file_path, os.O_RDONLY)
+        fd2 = self.os.dup(fd1)
+        self.assertEqual(b"hey", self.os.read(fd1, 3))
+        self.assertEqual(b"there", self.os.read(fd1, 10))
+        self.os.close(fd2)
+        self.os.close(fd1)
+
+    def test_dup_uses_freed_fd(self):
+        file_path1 = self.make_path("foo.txt")
+        file_path2 = self.make_path("bar.txt")
+        self.create_file(file_path1, contents="foo here")
+        self.create_file(file_path2, contents="bar here")
+        fd1 = self.os.open(file_path1, os.O_RDONLY)
+        fd2 = self.os.open(file_path2, os.O_RDONLY)
+        self.os.close(fd1)
+        fd3 = self.os.dup(fd2)
+        self.assertEqual(fd1, fd3)
+        self.os.close(fd2)
+
+    def test_dup2_uses_existing_fd(self):
+        with self.assertRaises(OSError) as cm:
+            self.os.dup2(500, 501)
+        self.assertEqual(errno.EBADF, cm.exception.errno)
+
+        file_path1 = self.make_path("foo.txt")
+        file_path2 = self.make_path("bar.txt")
+        self.create_file(file_path1, contents="foo here")
+        self.create_file(file_path2, contents="bar here")
+        fd1 = self.os.open(file_path1, os.O_RDONLY)
+        fd2 = self.os.open(file_path2, os.O_RDONLY)
+        self.assertEqual(b"bar", self.os.read(fd2, 3))
+        fd2 = self.os.dup2(fd1, fd2)
+        self.assertEqual(b"foo", self.os.read(fd2, 3))
+        self.os.lseek(fd2, 0, 0)
+        self.assertEqual(b"foo", self.os.read(fd1, 3))
+        self.os.close(fd2)
+
+    def test_dup2_with_new_fd(self):
+        file_path1 = self.make_path("foo.txt")
+        file_path2 = self.make_path("bar.txt")
+        self.create_file(file_path1)
+        self.create_file(file_path2)
+        fd1 = self.os.open(file_path1, os.O_RDONLY)
+        fd2 = fd1 + 2
+        self.assertEqual(fd2, self.os.dup2(fd1, fd2))
+        fd3 = self.os.open(file_path2, os.O_RDONLY)
+        fd4 = self.os.dup(fd3)
+        self.os.close(fd4)
+        self.os.close(fd2)
+        # we have a free position before fd2 that is now filled
+        self.assertEqual(fd1 + 1, fd3)
+        self.assertEqual(fd1 + 3, fd4)
+
 
 class RealOsModuleTest(FakeOsModuleTest):
     def use_real_fs(self):
@@ -2889,7 +3074,7 @@ class RealOsModuleTest(FakeOsModuleTest):
 
 class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
     def setUp(self):
-        super(FakeOsModuleTestCaseInsensitiveFS, self).setUp()
+        super().setUp()
         self.check_case_insensitive_fs()
         self.rwx = self.os.R_OK | self.os.W_OK | self.os.X_OK
         self.rw = self.os.R_OK | self.os.W_OK
@@ -2920,22 +3105,52 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         files.sort()
         self.assertEqual(files, sorted(self.os.listdir(self.make_path("SymLink"))))
 
-    def test_fdopen_mode(self):
-        self.skip_real_fs()
-        file_path1 = self.make_path("some_file1")
-        file_path2 = self.make_path("Some_File1")
-        file_path3 = self.make_path("SOME_file1")
-        self.create_file(file_path1, contents="contents here1")
-        self.os.chmod(file_path2, (stat.S_IFREG | 0o666) ^ stat.S_IWRITE)
+    def test_listdir_possible_without_exe_permission(self):
+        # regression test for #960
+        self.check_posix_only()
+        self.skip_root()
+        directory = self.make_path("testdir")
+        file_path = self.os.path.join(directory, "file.txt")
+        self.create_file(file_path, contents="hey", perm=0o777)
+        self.os.chmod(directory, 0o655)  # rw-r-xr-x
+        # We cannot create any files in the directory, because that requires
+        # searching it
+        another_file = self.make_path("file.txt")
+        self.create_file(another_file, contents="hey")
+        with self.assertRaises(PermissionError):
+            self.os.link(another_file, self.os.path.join(directory, "link.txt"))
+        # We can enumerate the directory using listdir and scandir:
+        assert self.os.listdir(directory) == ["file.txt"]
+        assert len(list(self.os.scandir(directory))) == 1
 
-        fake_file1 = self.open(file_path3, "r")
-        fileno1 = fake_file1.fileno()
-        self.os.fdopen(fileno1)
-        self.os.fdopen(fileno1, "r")
-        if not is_root():
-            self.assertRaises(OSError, self.os.fdopen, fileno1, "w")
-        else:
-            self.os.fdopen(fileno1, "w")
+        # We cannot read files inside of the directory,
+        # even if we have read access to the file
+        with self.assertRaises(PermissionError):
+            self.os.stat(file_path)
+        with self.assertRaises(PermissionError):
+            with self.open(file_path, encoding="utf8") as f:
+                f.read()
+
+    def test_listdir_impossible_without_read_permission(self):
+        # regression test for #960
+        self.check_posix_only()
+        self.skip_root()
+        directory = self.make_path("testdir")
+        file_path = self.os.path.join(directory, "file.txt")
+        self.create_file(file_path, contents="hey", perm=0o777)
+        self.os.chmod(directory, 0o355)  # -wxr-xr-x
+        another_file = self.make_path("file.txt")
+        self.create_file(another_file, contents="hey")
+        self.os.link(another_file, self.os.path.join(directory, "link.txt"))
+        # We cannot enumerate the directory using listdir or scandir:
+        with self.assertRaises(PermissionError):
+            self.os.listdir(directory)
+        with self.assertRaises(PermissionError):
+            self.os.scandir(directory)
+        # we can access the file if we know the file name
+        assert self.os.stat(file_path).st_mode & 0o777 == 0o755
+        with self.open(file_path, encoding="utf8") as f:
+            assert f.read() == "hey"
 
     def test_stat(self):
         directory = self.make_path("xyzzy")
@@ -3093,7 +3308,7 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.check_windows_only()
         path = self.make_path("foo", "bar")
         self.create_file(path)
-        with self.open(path, "r"):
+        with self.open(path, "r", encoding="utf8"):
             self.assert_raises_os_error(errno.EACCES, self.os.remove, path.upper())
         self.assertTrue(self.os.path.exists(path))
 
@@ -3101,7 +3316,7 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.check_posix_only()
         path = self.make_path("foo", "bar")
         self.create_file(path)
-        self.open(path, "r")
+        self.open(path, "r", encoding="utf8")
         self.os.remove(path.upper())
         self.assertFalse(self.os.path.exists(path))
 
@@ -3747,7 +3962,7 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
     def test_fsync_pass(self):
         test_file_path = self.make_path("test_file")
         self.create_file(test_file_path, contents="dummy file contents")
-        test_file = self.open(test_file_path.upper(), "r+")
+        test_file = self.open(test_file_path.upper(), "r+", encoding="utf8")
         test_fd = test_file.fileno()
         # Test that this doesn't raise anything
         self.os.fsync(test_fd)
@@ -3794,7 +4009,7 @@ class FakeOsModuleTestCaseInsensitiveFS(FakeOsModuleTestBase):
         self.os.unlink(file1_path)
         # assert that second file exists, and its contents are the same
         self.assertTrue(self.os.path.exists(file2_path))
-        with self.open(file2_path.upper()) as f:
+        with self.open(file2_path.upper(), encoding="utf8") as f:
             self.assertEqual(f.read(), contents1)
 
     def test_link_is_existing_file(self):
@@ -3944,7 +4159,7 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
         path = self.make_path("some_file")
         self.createTestFile(path)
 
-        with FakeFileOpen(self.filesystem)(path) as f:
+        with FakeFileOpen(self.filesystem)(path, encoding="utf8") as f:
             self.os.utime(f.filedes, times=(1, 2))
             st = self.os.stat(path)
             self.assertEqual(1, st.st_atime)
@@ -3953,10 +4168,6 @@ class FakeOsModuleTimeTest(FakeOsModuleTestBase):
 
 class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
     """Test low level functions `os.open()`, `os.read()` and `os.write()`."""
-
-    def setUp(self):
-        os.umask(0o022)
-        super(FakeOsModuleLowLevelFileOpTest, self).setUp()
 
     def test_open_read_only(self):
         file_path = self.make_path("file1")
@@ -4397,7 +4608,7 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
         self.os.sendfile(fd2, fd1, 0, 3)
         self.os.close(fd2)
         self.os.close(fd1)
-        with self.open(dst_file_path) as f:
+        with self.open(dst_file_path, encoding="utf8") as f:
             self.assertEqual("tes", f.read())
 
     def test_sendfile_with_offset(self):
@@ -4411,7 +4622,7 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
         self.os.sendfile(fd2, fd1, 4, 4)
         self.os.close(fd2)
         self.os.close(fd1)
-        with self.open(dst_file_path) as f:
+        with self.open(dst_file_path, encoding="utf8") as f:
             self.assertEqual("cont", f.read())
 
     def test_sendfile_twice(self):
@@ -4426,7 +4637,7 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
         self.os.sendfile(fd2, fd1, 4, 4)
         self.os.close(fd2)
         self.os.close(fd1)
-        with self.open(dst_file_path) as f:
+        with self.open(dst_file_path, encoding="utf8") as f:
             self.assertEqual("contcont", f.read())
 
     def test_sendfile_offset_none(self):
@@ -4441,7 +4652,7 @@ class FakeOsModuleLowLevelFileOpTest(FakeOsModuleTestBase):
         self.os.sendfile(fd2, fd1, None, 3)
         self.os.close(fd2)
         self.os.close(fd1)
-        with self.open(dst_file_path) as f:
+        with self.open(dst_file_path, encoding="utf8") as f:
             self.assertEqual("testcon", f.read())
 
     @unittest.skipIf(not TestCase.is_macos, "Testing MacOs only behavior")
@@ -4675,229 +4886,253 @@ class RealOsModuleWalkTest(FakeOsModuleWalkTest):
 
 class FakeOsModuleDirFdTest(FakeOsModuleTestBase):
     def setUp(self):
-        super(FakeOsModuleDirFdTest, self).setUp()
-        self.os.supports_dir_fd.clear()
-        self.filesystem.is_windows_fs = False
-        self.filesystem.create_dir("/foo/bar")
-        self.dir_fd = self.os.open("/foo", os.O_RDONLY)
-        self.filesystem.create_file("/foo/baz")
+        super().setUp()
+        self.check_posix_only()
+        if not self.use_real_fs():
+            # in the real OS, we test the option as is, in the fake OS
+            # we test both the supported and unsupported option
+            self.os.supports_dir_fd.clear()
+        self.dir_fd_path = self.make_path("foo")
+        self.create_dir(self.dir_fd_path)
+        self.dir_fd = self.os.open(self.dir_fd_path, os.O_RDONLY)
+        self.fname = "baz"
+        self.fpath = self.os.path.join(self.dir_fd_path, self.fname)
+        self.create_file(self.fpath)
+
+    def add_supported_function(self, fct):
+        if not self.use_real_fs():
+            self.os.supports_dir_fd.add(fct)
 
     def test_access(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.access,
-            "baz",
-            self.os.F_OK,
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.access)
-        self.assertTrue(self.os.access("baz", self.os.F_OK, dir_fd=self.dir_fd))
+        def os_access():
+            return self.os.access(self.fname, self.os.F_OK, dir_fd=self.dir_fd)
+
+        if self.os.access not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_access()
+        self.add_supported_function(self.os.access)
+        if self.os.access in self.os.supports_dir_fd:
+            self.assertTrue(os_access())
 
     def test_chmod(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.chmod,
-            "baz",
-            0o6543,
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.chmod)
-        self.os.chmod("baz", 0o6543, dir_fd=self.dir_fd)
-        st = self.os.stat("/foo/baz")
-        self.assert_mode_equal(0o6543, st.st_mode)
+        def os_chmod():
+            self.os.chmod(self.fname, 0o6543, dir_fd=self.dir_fd)
+
+        if self.os.chmod not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_chmod()
+        self.add_supported_function(self.os.chmod)
+        if self.os.chmod in self.os.supports_dir_fd:
+            os_chmod()
+            st = self.os.stat(self.fpath)
+            self.assert_mode_equal(0o6543, st.st_mode)
 
     @unittest.skipIf(not hasattr(os, "chown"), "chown not on all platforms available")
     def test_chown(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.chown,
-            "baz",
-            100,
-            101,
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.chown)
-        self.os.chown("baz", 100, 101, dir_fd=self.dir_fd)
-        st = self.os.stat("/foo/baz")
-        self.assertEqual(st[stat.ST_UID], 100)
-        self.assertEqual(st[stat.ST_GID], 101)
+        def os_chown():
+            self.os.chown(self.fname, 100, 101, dir_fd=self.dir_fd)
+
+        self.skip_real_fs()
+        if self.os.chown not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_chown()
+        self.add_supported_function(self.os.chown)
+        os_chown()
+        st = self.os.stat(self.fpath)
+        self.assertEqual(100, st[stat.ST_UID])
+        self.assertEqual(101, st[stat.ST_GID])
 
     def test_link_src_fd(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.link,
-            "baz",
-            "/bat",
-            src_dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.link)
-        self.os.link("baz", "/bat", src_dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/bat"))
+        def os_link():
+            self.os.link(self.fname, link_dest, src_dir_fd=self.dir_fd)
+
+        link_dest = self.make_path("bat")
+        if self.os.link not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_link()
+        self.add_supported_function(self.os.link)
+        if self.os.link in self.os.supports_dir_fd:
+            os_link()
+            self.assertTrue(self.os.path.exists(link_dest))
 
     def test_link_dst_fd(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.link,
-            "baz",
-            "/bat",
-            dst_dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.link)
-        self.os.link("/foo/baz", "bat", dst_dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/bat"))
+        def os_link():
+            self.os.link(self.fpath, "bat", dst_dir_fd=self.dir_fd)
+
+        if self.os.link not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_link()
+        self.add_supported_function(self.os.link)
+        if self.os.link in self.os.supports_dir_fd:
+            os_link()
+            link_path = self.os.path.join(self.dir_fd_path, "bat")
+            self.assertTrue(self.os.path.exists(link_path))
 
     def test_symlink(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.symlink,
-            "baz",
-            "/bat",
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.symlink)
-        self.os.symlink("baz", "/bat", dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/bat"))
+        def os_symlink():
+            self.os.symlink(self.fpath, "bat", dir_fd=self.dir_fd)
+
+        if self.os.symlink not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_symlink()
+        self.add_supported_function(self.os.symlink)
+        if self.os.symlink in self.os.supports_dir_fd:
+            os_symlink()
+            link_path = self.os.path.join(self.dir_fd_path, "bat")
+            self.assertTrue(self.os.path.exists(link_path))
 
     def test_readlink(self):
-        self.skip_if_symlink_not_supported()
-        self.filesystem.create_symlink("/meyer/lemon/pie", "/foo/baz")
-        self.filesystem.create_symlink("/geo/metro", "/meyer")
-        self.assertRaises(
-            NotImplementedError,
-            self.os.readlink,
-            "/geo/metro/lemon/pie",
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.readlink)
-        self.assertEqual(
-            "/foo/baz",
-            self.os.readlink("/geo/metro/lemon/pie", dir_fd=self.dir_fd),
-        )
+        def os_readlink():
+            return self.os.readlink("lemon/tree", dir_fd=self.dir_fd)
+
+        link_dir = self.os.path.join(self.dir_fd_path, "lemon")
+        self.create_dir(link_dir)
+        self.create_symlink(self.os.path.join(link_dir, "tree"), self.fpath)
+        if self.os.readlink not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_readlink()
+        self.add_supported_function(self.os.readlink)
+        if self.os.readlink in self.os.supports_dir_fd:
+            self.assertEqual(self.fpath, os_readlink())
 
     def test_stat(self):
-        self.assertRaises(NotImplementedError, self.os.stat, "baz", dir_fd=self.dir_fd)
-        self.os.supports_dir_fd.add(self.os.stat)
-        st = self.os.stat("baz", dir_fd=self.dir_fd)
-        self.assertEqual(st.st_mode, 0o100666)
+        def os_stat():
+            return self.os.stat(self.fname, dir_fd=self.dir_fd)
+
+        if self.os.stat not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_stat()
+        self.add_supported_function(self.os.stat)
+        if self.os.stat in self.os.supports_dir_fd:
+            self.assertEqual(os_stat().st_mode, 0o100644)
 
     def test_lstat(self):
-        self.assertRaises(NotImplementedError, self.os.lstat, "baz", dir_fd=self.dir_fd)
-        self.os.supports_dir_fd.add(self.os.lstat)
-        st = self.os.lstat("baz", dir_fd=self.dir_fd)
-        self.assertEqual(st.st_mode, 0o100666)
+        st = self.os.lstat(self.fname, dir_fd=self.dir_fd)
+        self.assertEqual(st.st_mode, 0o100644)
 
     def test_mkdir(self):
-        self.assertRaises(
-            NotImplementedError, self.os.mkdir, "newdir", dir_fd=self.dir_fd
-        )
-        self.os.supports_dir_fd.add(self.os.mkdir)
-        self.os.mkdir("newdir", dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/newdir"))
+        def os_mkdir():
+            self.os.mkdir("newdir", dir_fd=self.dir_fd)
+
+        newdir_path = self.os.path.join(self.dir_fd_path, "newdir")
+        if self.os.mkdir not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_mkdir()
+        self.add_supported_function(self.os.mkdir)
+        if self.os.mkdir in self.os.supports_dir_fd:
+            os_mkdir()
+            self.assertTrue(self.os.path.exists(newdir_path))
 
     def test_rmdir(self):
-        self.assertRaises(NotImplementedError, self.os.rmdir, "bar", dir_fd=self.dir_fd)
-        self.os.supports_dir_fd.add(self.os.rmdir)
-        self.os.rmdir("bar", dir_fd=self.dir_fd)
-        self.assertFalse(self.os.path.exists("/foo/bar"))
+        def os_rmdir():
+            self.os.rmdir("dir", dir_fd=self.dir_fd)
+
+        dir_path = self.os.path.join(self.dir_fd_path, "dir")
+        self.create_dir(dir_path)
+        self.assertTrue(self.os.path.exists(dir_path))
+        if self.os.rmdir not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_rmdir()
+        self.add_supported_function(self.os.rmdir)
+        if self.os.rmdir in self.os.supports_dir_fd:
+            os_rmdir()
+            self.assertFalse(self.os.path.exists(dir_path))
 
     @unittest.skipIf(not hasattr(os, "mknod"), "mknod not on all platforms available")
     def test_mknod(self):
-        self.assertRaises(
-            NotImplementedError, self.os.mknod, "newdir", dir_fd=self.dir_fd
-        )
-        self.os.supports_dir_fd.add(self.os.mknod)
-        self.os.mknod("newdir", dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/newdir"))
+        def os_mknod():
+            self.os.mknod("newdir", dir_fd=self.dir_fd)
+
+        if self.os.mknod not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_mknod()
+        self.add_supported_function(self.os.mknod)
+        if self.os.mknod in self.os.supports_dir_fd:
+            os_mknod()
+            newdir_path = self.os.path.join(self.dir_fd_path, "newdir")
+            self.assertTrue(self.os.path.exists(newdir_path))
 
     def test_rename_src_fd(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.rename,
-            "baz",
-            "/foo/batz",
-            src_dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.rename)
-        self.os.rename("bar", "/foo/batz", src_dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/batz"))
+        def os_rename():
+            self.os.rename(self.fname, new_name, src_dir_fd=self.dir_fd)
+
+        new_name = self.os.path.join(self.dir_fd_path, "batz")
+        if self.os.rename not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_rename()
+        self.add_supported_function(self.os.rename)
+        if self.os.rename in self.os.supports_dir_fd:
+            os_rename()
+            self.assertTrue(self.os.path.exists(new_name))
 
     def test_rename_dst_fd(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.rename,
-            "baz",
-            "/foo/batz",
-            dst_dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.rename)
-        self.os.rename("/foo/bar", "batz", dst_dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/batz"))
+        def os_rename():
+            self.os.rename(self.fpath, "batz", dst_dir_fd=self.dir_fd)
+
+        if self.os.rename not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_rename()
+        self.add_supported_function(self.os.rename)
+        if self.os.rename in self.os.supports_dir_fd:
+            os_rename()
+            new_path = self.os.path.join(self.dir_fd_path, "batz")
+            self.assertTrue(self.os.path.exists(new_path))
 
     def test_replace_src_fd(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.rename,
-            "baz",
-            "/foo/batz",
-            src_dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.rename)
-        self.os.replace("bar", "/foo/batz", src_dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/batz"))
+        new_name = self.os.path.join(self.dir_fd_path, "batz")
+        self.os.replace(self.fname, new_name, src_dir_fd=self.dir_fd)
+        self.assertTrue(self.os.path.exists(new_name))
 
     def test_replace_dst_fd(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.rename,
-            "baz",
-            "/foo/batz",
-            dst_dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.rename)
-        self.os.replace("/foo/bar", "batz", dst_dir_fd=self.dir_fd)
-        self.assertTrue(self.os.path.exists("/foo/batz"))
+        self.os.replace(self.fpath, "batz", dst_dir_fd=self.dir_fd)
+        new_path = self.os.path.join(self.dir_fd_path, "batz")
+        self.assertTrue(self.os.path.exists(new_path))
 
     def test_remove(self):
-        self.assertRaises(
-            NotImplementedError, self.os.remove, "baz", dir_fd=self.dir_fd
-        )
-        self.os.supports_dir_fd.add(self.os.remove)
-        self.os.remove("baz", dir_fd=self.dir_fd)
-        self.assertFalse(self.os.path.exists("/foo/baz"))
+        self.os.remove(self.fname, dir_fd=self.dir_fd)
+        self.assertFalse(self.os.path.exists(self.fpath))
 
     def test_unlink(self):
-        self.assertRaises(
-            NotImplementedError, self.os.unlink, "baz", dir_fd=self.dir_fd
-        )
-        self.os.supports_dir_fd.add(self.os.unlink)
-        self.os.unlink("baz", dir_fd=self.dir_fd)
-        self.assertFalse(self.os.path.exists("/foo/baz"))
+        def os_unlink():
+            self.os.unlink(self.fname, dir_fd=self.dir_fd)
+
+        if self.os.unlink not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_unlink()
+        self.add_supported_function(self.os.unlink)
+        if self.os.unlink in self.os.supports_dir_fd:
+            os_unlink()
+            self.assertFalse(self.os.path.exists(self.fpath))
 
     def test_utime(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.utime,
-            "baz",
-            (1, 2),
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.utime)
-        self.os.utime("baz", times=(1, 2), dir_fd=self.dir_fd)
-        st = self.os.stat("/foo/baz")
-        self.assertEqual(1, st.st_atime)
-        self.assertEqual(2, st.st_mtime)
+        def os_utime():
+            self.os.utime(self.fname, times=(1, 2), dir_fd=self.dir_fd)
+
+        if self.os.utime not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_utime()
+        self.add_supported_function(self.os.utime)
+        if self.os.utime in self.os.supports_dir_fd:
+            os_utime()
+            st = self.os.stat(self.fpath)
+            self.assertEqual(1, st.st_atime)
+            self.assertEqual(2, st.st_mtime)
 
     def test_open(self):
-        self.assertRaises(
-            NotImplementedError,
-            self.os.open,
-            "baz",
-            os.O_RDONLY,
-            dir_fd=self.dir_fd,
-        )
-        self.os.supports_dir_fd.add(self.os.open)
-        fd = self.os.open("baz", os.O_RDONLY, dir_fd=self.dir_fd)
-        self.assertLess(0, fd)
+        def os_open():
+            return self.os.open(self.fname, os.O_RDONLY, dir_fd=self.dir_fd)
+
+        if self.os.open not in self.os.supports_dir_fd:
+            with self.assertRaises(NotImplementedError):
+                os_open()
+        self.add_supported_function(self.os.open)
+        if self.os.open in self.os.supports_dir_fd:
+            self.assertLess(0, os_open())
+
+
+class RealOsModuleDirFdTest(FakeOsModuleDirFdTest):
+    def use_real_fs(self):
+        return True
 
 
 class StatPropagationTest(TestCase):
@@ -4912,7 +5147,7 @@ class StatPropagationTest(TestCase):
         file_path = "xyzzy/close"
         content = "This is a test."
         self.os.mkdir(file_dir)
-        fh = self.open(file_path, "w")
+        fh = self.open(file_path, "w", encoding="utf8")
         self.assertEqual(0, self.os.stat(file_path)[stat.ST_SIZE])
         self.assertEqual("", self.filesystem.get_object(file_path).contents)
         fh.write(content)
@@ -4930,9 +5165,9 @@ class StatPropagationTest(TestCase):
         # The file has size, but no content. When the file is opened for
         # reading, its size should be preserved.
         self.filesystem.create_file(file_path, st_size=size)
-        fh = self.open(file_path, "r")
+        fh = self.open(file_path, "r", encoding="utf8")
         fh.close()
-        self.assertEqual(size, self.open(file_path, "r").size())
+        self.assertEqual(size, self.open(file_path, "r", encoding="utf8").size())
 
     def test_file_size_after_write(self):
         file_path = "test_file"
@@ -4941,11 +5176,13 @@ class StatPropagationTest(TestCase):
         self.filesystem.create_file(file_path, contents=original_content)
         added_content = "foo bar"
         expected_size = original_size + len(added_content)
-        fh = self.open(file_path, "a")
+        fh = self.open(file_path, "a", encoding="utf8")
         fh.write(added_content)
         self.assertEqual(original_size, fh.size())
         fh.close()
-        self.assertEqual(expected_size, self.open(file_path, "r").size())
+        self.assertEqual(
+            expected_size, self.open(file_path, "r", encoding="utf8").size()
+        )
 
     def test_large_file_size_after_write(self):
         file_path = "test_file"
@@ -4953,7 +5190,7 @@ class StatPropagationTest(TestCase):
         original_size = len(original_content)
         self.filesystem.create_file(file_path, st_size=original_size)
         added_content = "foo bar"
-        fh = self.open(file_path, "a")
+        fh = self.open(file_path, "a", encoding="utf8")
         self.assertRaises(
             fake_file.FakeLargeFileIoException,
             lambda: fh.write(added_content),
@@ -4966,7 +5203,7 @@ class StatPropagationTest(TestCase):
         file_path = self.os.path.join(file_dir, file_name)
         content = "This might be a test."
         self.os.mkdir(file_dir)
-        fh = self.open(file_path, "w")
+        fh = self.open(file_path, "w", encoding="utf8")
         self.assertEqual(0, self.os.stat(file_path)[stat.ST_SIZE])
         self.assertEqual("", self.filesystem.get_object(file_path).contents)
         fh.write(content)
@@ -4987,41 +5224,30 @@ class StatPropagationTest(TestCase):
 
         # pre-create file with content
         self.os.mkdir(file_dir)
-        fh = self.open(file_path, "w")
+        fh = self.open(file_path, "w", encoding="utf8")
         fh.write(content)
         fh.close()
         self.assertEqual(len(content), self.os.stat(file_path)[stat.ST_SIZE])
         self.assertEqual(content, self.filesystem.get_object(file_path).contents)
 
         # test file truncation
-        fh = self.open(file_path, "w")
+        fh = self.open(file_path, "w", encoding="utf8")
         self.assertEqual(0, self.os.stat(file_path)[stat.ST_SIZE])
         self.assertEqual("", self.filesystem.get_object(file_path).contents)
         fh.close()
 
 
-@unittest.skipIf(not use_scandir, "only run if scandir is available")
 class FakeScandirTest(FakeOsModuleTestBase):
     FILE_SIZE = 50
     LINKED_FILE_SIZE = 10
 
+    def used_scandir(self):
+        return self.os.scandir
+
     def setUp(self):
-        super(FakeScandirTest, self).setUp()
+        super().setUp()
         self.supports_symlinks = not self.is_windows or not self.use_real_fs()
-
-        if use_scandir_package:
-            if self.use_real_fs():
-                from scandir import scandir
-            else:
-                import pyfakefs.fake_scandir
-
-                def fake_scan_dir(p):
-                    return pyfakefs.fake_scandir.scandir(self.filesystem, p)
-
-                scandir = fake_scan_dir
-        else:
-            scandir = self.os.scandir
-        self.scandir = scandir
+        self.scandir = self.used_scandir()
 
         self.directory = self.make_path("xyzzy", "plugh")
         link_dir = self.make_path("linked", "plugh")
@@ -5046,7 +5272,7 @@ class FakeScandirTest(FakeOsModuleTestBase):
             self.create_dir(self.linked_dir_path)
             self.create_file(
                 self.linked_file_path, contents=b"a" * self.LINKED_FILE_SIZE
-            ),
+            )
             self.create_symlink(self.dir_link_path, self.linked_dir_path)
             self.create_symlink(self.file_link_path, self.linked_file_path)
             self.create_symlink(self.dir_rel_link_path, self.rel_linked_dir_path)
@@ -5139,7 +5365,7 @@ class FakeScandirTest(FakeOsModuleTestBase):
         )
 
     def test_inode(self):
-        if use_scandir and self.use_real_fs():
+        if self.use_real_fs():
             if self.is_windows:
                 self.skipTest("inode seems not to work in scandir module under Windows")
             if IN_DOCKER:
@@ -5183,7 +5409,6 @@ class FakeScandirTest(FakeOsModuleTestBase):
                 self.assertEqual(1, self.os.stat(self.file_path).st_nlink)
 
     @unittest.skipIf(not hasattr(os, "O_DIRECTORY"), "opening directory not supported")
-    @unittest.skipIf(sys.version_info < (3, 7), "fd not supported for scandir")
     def test_scandir_with_fd(self):
         # regression test for #723
         temp_dir = self.make_path("tmp", "dir")
@@ -5260,10 +5485,6 @@ class FakeScandirTest(FakeOsModuleTestBase):
             self.assertEqual(file_stat.st_ino, self.dir_entries[5].stat().st_ino)
             self.assertEqual(file_stat.st_dev, self.dir_entries[5].stat().st_dev)
 
-    @unittest.skipIf(
-        not use_builtin_scandir,
-        "Path-like objects not available in scandir package",
-    )
     def test_path_like(self):
         self.assertTrue(isinstance(self.dir_entries[0], os.PathLike))
         self.assertEqual(
@@ -5302,11 +5523,10 @@ class RealScandirRelTest(FakeScandirRelTest):
 
 
 @unittest.skipIf(TestCase.is_windows, "dir_fd not supported for os.scandir in Windows")
-@unittest.skipIf(use_scandir_package, "no dir_fd support for scandir package")
 class FakeScandirFdTest(FakeScandirTest):
     def tearDown(self):
         self.os.close(self.dir_fd)
-        super(FakeScandirFdTest, self).tearDown()
+        super().tearDown()
 
     def scandir_path(self):
         # When scandir is called with a filedescriptor, only the name of the
@@ -5336,7 +5556,7 @@ class RealScandirFdRelTest(FakeScandirFdRelTest):
 
 class FakeExtendedAttributeTest(FakeOsModuleTestBase):
     def setUp(self):
-        super(FakeExtendedAttributeTest, self).setUp()
+        super().setUp()
         self.check_linux_only()
         self.dir_path = self.make_path("foo")
         self.file_path = self.os.path.join(self.dir_path, "bar")
@@ -5346,26 +5566,25 @@ class FakeExtendedAttributeTest(FakeOsModuleTestBase):
         self.assertEqual([], self.os.listxattr(self.dir_path))
         self.assertEqual([], self.os.listxattr(self.file_path))
 
+    def test_getxattr_raises_for_non_existing_file(self):
+        with self.assertRaises(FileNotFoundError):
+            self.os.getxattr("bogus_path", "test")
+
+    def test_getxattr_raises_for_non_existing_attribute(self):
+        with self.assertRaises(OSError) as cm:
+            self.os.getxattr(self.file_path, "bogus")
+        self.assertEqual(errno.ENODATA, cm.exception.errno)
+
     def test_setxattr(self):
-        self.assertRaises(TypeError, self.os.setxattr, self.file_path, "test", "value")
-        self.assert_raises_os_error(
-            errno.EEXIST,
-            self.os.setxattr,
-            self.file_path,
-            "test",
-            b"value",
-            self.os.XATTR_REPLACE,
-        )
+        with self.assertRaises(TypeError):
+            self.os.setxattr(self.file_path, "test", "value")
+        with self.assertRaises(FileExistsError):
+            self.os.setxattr(self.file_path, "test", b"value", self.os.XATTR_REPLACE)
         self.os.setxattr(self.file_path, "test", b"value")
         self.assertEqual(b"value", self.os.getxattr(self.file_path, "test"))
-        self.assert_raises_os_error(
-            errno.ENODATA,
-            self.os.setxattr,
-            self.file_path,
-            "test",
-            b"value",
-            self.os.XATTR_CREATE,
-        )
+        with self.assertRaises(OSError) as cm:
+            self.os.setxattr(self.file_path, "test", b"value", self.os.XATTR_CREATE)
+        self.assertEqual(errno.ENODATA, cm.exception.errno)
 
     def test_removeattr(self):
         self.os.removexattr(self.file_path, "test")
@@ -5375,7 +5594,9 @@ class FakeExtendedAttributeTest(FakeOsModuleTestBase):
         self.assertEqual(b"value", self.os.getxattr(self.file_path, "test"))
         self.os.removexattr(self.file_path, "test")
         self.assertEqual([], self.os.listxattr(self.file_path))
-        self.assertIsNone(self.os.getxattr(self.file_path, "test"))
+        with self.assertRaises(OSError) as cm:
+            self.os.getxattr(self.file_path, "test")
+        self.assertEqual(errno.ENODATA, cm.exception.errno)
 
     def test_default_path(self):
         self.os.chdir(self.dir_path)
@@ -5391,7 +5612,7 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
             # and cannot be created in the real OS using file system
             # functions only
             self.check_posix_only()
-        super(FakeOsUnreadableDirTest, self).setUp()
+        super().setUp()
         self.dir_path = self.make_path("some_dir")
         self.file_path = self.os.path.join(self.dir_path, "some_file")
         self.create_file(self.file_path)
@@ -5410,7 +5631,7 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
         set_uid(uid + 10)
         self.assertEqual(uid + 10, self.os.getuid())
         self.assertEqual(uid + 10, get_uid())
-        set_uid(uid)
+        reset_ids()
         self.assertEqual(uid, self.os.getuid())
 
     def test_getgid(self):
@@ -5420,7 +5641,7 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
         set_gid(gid + 10)
         self.assertEqual(gid + 10, self.os.getgid())
         self.assertEqual(gid + 10, get_gid())
-        set_gid(gid)
+        reset_ids()
         self.assertEqual(gid, self.os.getgid())
 
     def test_listdir_unreadable_dir(self):
@@ -5439,10 +5660,10 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
         self.check_posix_only()
         user_id = get_uid()
         set_uid(user_id + 1)
-        dir_path = self.make_path("dir1")
+        dir_path = "/dir1"
         self.create_dir(dir_path, perm=0o600)
         self.assertTrue(self.os.path.exists(dir_path))
-        set_uid(user_id)
+        reset_ids()
         if not is_root():
             with self.assertRaises(PermissionError):
                 self.os.listdir(dir_path)
@@ -5451,12 +5672,12 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
 
     def test_listdir_group_readable_dir_from_other_user(self):
         self.skip_real_fs()  # won't change user in real fs
-        user_id = get_uid()
-        set_uid(user_id + 1)
-        dir_path = self.make_path("dir1")
+        self.check_posix_only()
+        set_uid(get_uid() + 1)
+        dir_path = "/dir1"
         self.create_dir(dir_path, perm=0o660)
         self.assertTrue(self.os.path.exists(dir_path))
-        set_uid(user_id)
+        reset_ids()
         self.assertEqual([], self.os.listdir(dir_path))
 
     def test_listdir_group_readable_dir_from_other_group(self):
@@ -5464,7 +5685,7 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
         self.check_posix_only()
         group_id = self.os.getgid()
         set_gid(group_id + 1)
-        dir_path = self.make_path("dir1")
+        dir_path = "/dir1"
         self.create_dir(dir_path, perm=0o060)
         self.assertTrue(self.os.path.exists(dir_path))
         set_gid(group_id)
@@ -5475,14 +5696,15 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
             self.assertEqual([], self.os.listdir(dir_path))
 
     def test_listdir_other_readable_dir_from_other_group(self):
+        self.check_posix_only()
         self.skip_real_fs()  # won't change user in real fs
-        group_id = get_gid()
-        set_gid(group_id + 1)
         dir_path = self.make_path("dir1")
-        self.create_dir(dir_path, perm=0o004)
+        self.create_dir(dir_path, 0o004)
+        set_uid(get_uid() + 1)
+        set_gid(get_gid() + 1)
         self.assertTrue(self.os.path.exists(dir_path))
-        set_gid(group_id)
         self.assertEqual([], self.os.listdir(dir_path))
+        reset_ids()
 
     def test_stat_unreadable_dir(self):
         self.assertEqual(0, self.os.stat(self.dir_path).st_mode & 0o666)
@@ -5508,13 +5730,13 @@ class FakeOsUnreadableDirTest(FakeOsModuleTestBase):
         self.assertFalse(self.os.path.exists(dir_path))
 
     def test_remove_unreadable_dir_from_other_user(self):
+        self.check_posix_only()
         self.skip_real_fs()  # won't change user in real fs
-        user_id = get_uid()
-        set_uid(user_id + 1)
-        dir_path = self.make_path("dir1")
+        set_uid(get_uid() + 1)
+        dir_path = "/dir1"
         self.create_dir(dir_path, perm=0o000)
         self.assertTrue(self.os.path.exists(dir_path))
-        set_uid(user_id)
+        reset_ids()
         if not is_root():
             with self.assertRaises(PermissionError):
                 self.os.rmdir(dir_path)

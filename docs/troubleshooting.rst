@@ -129,20 +129,37 @@ The test code tries to access files in the real filesystem
 ----------------------------------------------------------
 The loading of the actual Python code from the real filesystem does not use
 the filesystem functions that ``pyfakefs`` patches, but in some cases it may
-access other files in the packages. An example is loading timezone information
+access other files in the packages. An example is the ``pytz`` module, which is loading timezone information
 from configuration files. In these cases, you have to map the respective files
 or directories from the real into the fake filesystem as described in
-:ref:`real_fs_access`.
+:ref:`real_fs_access`. For the timezone example, this could look like the following::
+
+.. code:: python
+
+    from pathlib import Path
+    import pytz
+    from pyfakefs.fake_filesystem_unittest import TestCase
+
+
+    class ExampleTestCase(TestCase):
+        def setUp(self):
+            self.setUpPyfakefs()
+            info_dir = Path(pytz.__file__).parent / "zoneinfo"
+            self.fs.add_real_directory(info_dir)
+
+.. note:: In newer django versions, `tzdata` is used instead of `pytz`, but the usage will be the same.
 
 If you are using Django, various dependencies may expect both the project
 directory and the ``site-packages`` installation to exist in the fake filesystem.
 
-Here's an example of how to add these using pytest::
+Here's an example of how to add these using pytest:
 
+.. code:: python
 
     import os
     import django
     import pytest
+
 
     @pytest.fixture
     def fake_fs(fs):
@@ -162,8 +179,7 @@ As ``pyfakefs`` does not fake the ``tempfile`` module (as described above),
 a temporary directory is required to ensure that ``tempfile`` works correctly,
 e.g., that ``tempfile.gettempdir()`` will return a valid value. This
 means that any newly created fake file system will always have either a
-directory named ``/tmp`` when running on Linux or Unix systems,
-``/var/folders/<hash>/T`` when running on macOS, or
+directory named ``/tmp`` when running on POSIX systems, or
 ``C:\Users\<user>\AppData\Local\Temp`` on Windows:
 
 .. code:: python
@@ -175,11 +191,13 @@ directory named ``/tmp`` when running on Linux or Unix systems,
       # the temp directory is always present at test start
       assert len(os.listdir("/")) == 1
 
-Under macOS and linux, if the actual temp path is not `/tmp` (which is always the case
-under macOS), a symlink to the actual temp directory is additionally created as `/tmp`
-in the fake filesystem. Note that the file size of this link is ignored while
+Under macOS and linux, if the actual temp path is not `/tmp` (which will be the case if an environment variable
+`TEMPDIR`, `TEMP` or `TMP` points to another path), a symlink to the actual temp directory is additionally created
+as `/tmp` in the fake filesystem. Note that the file size of this link is ignored while
 calculating the fake filesystem size, so that the used size with an otherwise empty
 fake filesystem can always be assumed to be 0.
+Note also that the temp directory may not be what you expect, if you emulate another file system. For example,
+if you emulate Windows under Linux, the default temp directory will be at `C:\\tmp`.
 
 
 User rights
@@ -205,6 +223,9 @@ is the convenience argument :ref:`allow_root_user`:
       def setUp(self):
           self.setUpPyfakefs(allow_root_user=False)
 
+``Pyfakefs`` also handles file permissions under UNIX systems while accessing files.
+If accessing files as another user and/or group, the respective group/other file
+permissions are considered.
 
 .. _usage_with_mock_open:
 
@@ -261,6 +282,105 @@ regardless of the path they point to:
 
 Generally, mixing objects in the real filesystem and the fake filesystem
 is problematic and better avoided.
+
+.. note:: This problem only happens in Python versions up to 3.10. In Python 3.11,
+  `pathlib` has been restructured so that a pathlib path no longer contains a reference
+  to the original filesystem accessor, and it can safely be used in the fake filesystem.
+
+.. _nested_patcher_invocation:
+
+Nested file system fixtures and Patcher invocations
+---------------------------------------------------
+``pyfakefs`` does not support nested faked file systems. Instead, it uses reference counting
+on the single fake filesystem instance. That means, if you are trying to create a fake filesystem
+inside a fake filesystem, only the reference count will increase, and any arguments you may pass
+to the patcher or fixture are ignored. Likewise, if you leave a nested fake filesystem,
+only the reference count is decreased and nothing is reverted.
+
+There are some situations where that may happen, probably without you noticing:
+
+* If you use the module- or session based variants of the ``fs`` fixture (e.g. ``fs_module`` or
+  ``fs_session``), you may still use the ``fs`` fixture in single tests. This will practically
+  reference the module- or session based fake filesystem, instead of creating a new one.
+
+.. code:: python
+
+  @pytest.fixture(scope="module", autouse=True)
+  def use_fs(fs_module):
+      # do some setup...
+      yield fs_module
+
+
+  def test_something(fs):
+      do_more_fs_setup()
+      test_something()
+      # the fs setup done in this test is not reverted!
+
+* If you invoke a ``Patcher`` instance inside a test with the ``fs`` fixture (or with an active
+  ``fs_module`` or ``fs_session`` fixture), this will be ignored. For example:
+
+.. code:: python
+
+  def test_something(fs):
+      with Patcher(allow_root_user=False):
+          # root user is still allowed
+          do_stuff()
+
+* The same is true, if you use ``setUpPyfakefs`` or ``setUpClassPyfakefs`` in a unittest context, or if you use
+  the ``patchfs`` decorator. ``Patcher`` instances created in the tests will be ignored likewise.
+
+.. _failing_dyn_patcher:
+
+Tests failing after a test using pyfakefs
+-----------------------------------------
+If previously passing tests fail after a test using ``pyfakefs``, something may be wrong with reverting the
+patches. The most likely cause is a problem with the dynamic patcher, which is invoked if modules are loaded
+dynamically during the tests. These modules are removed after the test, and reloaded the next time they are
+imported, to avoid any remaining patched functions or variables. Sometimes, there is a problem with that reload.
+
+If you want to know if your problem is indeed with the dynamic patcher, you can switch it off by setting
+:ref:`use_dynamic_patch` to `False` (here an example with pytest):
+
+.. code:: python
+
+  @pytest.fixture
+  def fs_no_dyn_patch():
+      with Patcher(use_dynamic_patch=False):
+          yield
+
+
+  def test_something(fs_no_dyn_patch):
+      ...  # do the testing
+
+If in this case the following tests pass as expected, the dynamic patcher is indeed the problem.
+If your ``pyfakefs`` test also works with that setting, you may just use this. Otherwise,
+the dynamic patcher is needed, and the concrete problem has to be fixed. There is the possibility
+to add a hook for the cleanup of a specific module, which allows to change the process of unloading
+the module. This is currently used in ``pyfakefs`` for two cases: to reload ``django`` views instead of
+just unloading them (needed due to some django internals), and for the reload of a specific module
+in ``pandas``, which does not work out of the box.
+
+A cleanup handler takes the module name as an argument, and returns a Boolean that indicates if the
+cleanup was handled (by returning `True`), or if the module should still be unloaded. This handler has to
+be added to the patcher:
+
+.. code:: python
+
+  def handler_no_cleanup(_name):
+      # This is the simplest case: no cleanup is done at all.
+      # This makes only sense if you are sure that no file system functions are called.
+      return True
+
+
+  @pytest.fixture
+  def my_fs():
+      with Patcher():
+          patcher["modulename"] = handler_no_cleanup
+          yield
+
+As this may not be trivial, we recommend to write an issue in ``pyfakefs`` with a reproducible example.
+We will analyze the problem, and if we find a solution we will either get this fixed in ``pyfakefs``
+(if it is related to a commonly used module), or help you to resolve it.
 
 
 .. _`multiprocessing`: https://docs.python.org/3/library/multiprocessing.html

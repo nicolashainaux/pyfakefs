@@ -16,6 +16,7 @@ import pytest
 
 import pyfakefs.pytest_tests.example as example
 from pyfakefs.fake_filesystem_unittest import Patcher
+from pyfakefs.pytest_tests import unhashable
 
 
 @pytest.mark.xfail
@@ -39,6 +40,11 @@ def test_example_file_passing_using_patcher():
     with Patcher(modules_to_reload=[example]) as patcher:
         patcher.fs.create_file(example.EXAMPLE_FILE, contents="stuff here")
         check_that_example_file_is_in_fake_fs()
+
+
+def test_unhashable(fs):
+    # regression test for #923
+    print(unhashable)
 
 
 def check_that_example_file_is_in_fake_fs():

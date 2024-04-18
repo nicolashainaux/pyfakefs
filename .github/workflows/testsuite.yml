@@ -10,17 +10,19 @@ jobs:
     - name: Check out repository
       uses: actions/checkout@v4
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: "3.10"
     - name: install pytype
-      run: pip install setuptools pytype pytest scandir pathlib2 pandas xlrd django
+      run: pip install setuptools pytype pytest scandir pathlib2 pandas xlrd django pyarrow
     - name: Run pytype
       run: |
         pytype pyfakefs --keep-going --exclude pyfakefs/tests/* --exclude pyfakefs/pytest_tests/*
 
   tests:
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONWARNDEFAULTENCODING: true
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +39,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -49,10 +51,10 @@ jobs:
 
     - name: Cache dependencies
       id: cache-dep
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ matrix.os }}-${{ matrix.python-version }}-pip-${{ hashFiles('**/requirements.txt') }}-${{ hashFiles('**/extra_requirements.txt') }}
+        key: ${{ matrix.os }}-${{ matrix.python-version }}-pip-${{ hashFiles('**/requirements.txt') }}-${{ hashFiles('**/extra_requirements.txt') }}-${{ hashFiles('**/legacy_requirements.txt') }}
         restore-keys: |
           ${{ matrix.os }}-${{ matrix.python-version }}-pip-
 
@@ -77,13 +79,16 @@ jobs:
         fi
       shell: bash
     - name: Install extra dependencies
-      if: ${{ matrix.python-version != '3.12-dev' && matrix.python-version != 'pypy-3.10' }}
+      if: ${{ matrix.python-version != 'pypy-3.10' }}
       run: |
         pip install -r extra_requirements.txt
+        pip install -r legacy_requirements.txt
+        pip install zstandard cffi  # needed to test #910
       shell: bash
     - name: Run unit tests with extra packages as non-root user
-      if: ${{ matrix.python-version != '3.12-dev' && matrix.python-version != 'pypy-3.10' }}
+      if: ${{ matrix.python-version != 'pypy-3.10' }}
       run: |
+        export PYTHON_ZSTANDARD_IMPORT_POLICY=cffi  # needed to test #910
         python -m pyfakefs.tests.all_tests
       shell: bash
     - name: Run performance tests
@@ -105,14 +110,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install -U pytest==${{ matrix.pytest-version }}
-          pip install opentimelineio
+          pip install opentimelineio pandas parquet pyarrow
           pip install -e .
           if [[ '${{ matrix.pytest-version }}' == '4.0.2' ]]; then
              pip install -U attrs==19.1.0
@@ -137,13 +142,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install -r extra_requirements.txt
+          pip install -r legacy_requirements.txt
           pip install pytest-find-dependencies
       - name: Check dependencies
         run: python -m pytest --find-dependencies pyfakefs/tests

@@ -17,8 +17,10 @@
 import contextlib
 import errno
 import os
+import shutil
 import stat
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -603,7 +605,7 @@ class FakeFilesystemUnitTest(TestCase):
         fake_open = fake_filesystem.FakeFileOpen(self.filesystem)
         path = "foo/bar/baz"
         self.filesystem.create_file(path, contents=None)
-        with fake_open(path) as f:
+        with fake_open(path, encoding="utf8") as f:
             self.assertEqual("", f.read())
 
     def test_create_file_with_incorrect_mode_type(self):
@@ -1647,7 +1649,7 @@ class DiskSpaceTest(TestCase):
         self.fs.add_mount_point("!mount", total_size)
 
         def create_too_large_file():
-            with self.open("!mount!file", "w") as dest:
+            with self.open("!mount!file", "w", encoding="utf8") as dest:
                 dest.write("a" * (total_size + 1))
 
         with self.assertRaises(OSError):
@@ -1655,7 +1657,7 @@ class DiskSpaceTest(TestCase):
 
         self.assertEqual(0, self.fs.get_disk_usage("!mount").used)
 
-        with self.open("!mount!file", "w") as dest:
+        with self.open("!mount!file", "w", encoding="utf8") as dest:
             dest.write("a" * total_size)
 
         self.assertEqual(total_size, self.fs.get_disk_usage("!mount").used)
@@ -1880,50 +1882,50 @@ class DiskSpaceTest(TestCase):
         self.assertEqual(dest_file.contents, source_file.contents)
 
     def test_diskusage_after_open_write(self):
-        with self.open("bar.txt", "w") as f:
+        with self.open("bar.txt", "w", encoding="utf8") as f:
             f.write("a" * 60)
             f.flush()
         self.assertEqual(60, self.fs.get_disk_usage()[1])
 
     def test_disk_full_after_reopened(self):
-        with self.open("bar.txt", "w") as f:
+        with self.open("bar.txt", "w", encoding="utf8") as f:
             f.write("a" * 60)
-        with self.open("bar.txt") as f:
+        with self.open("bar.txt", encoding="utf8") as f:
             self.assertEqual("a" * 60, f.read())
         with self.raises_os_error(errno.ENOSPC):
-            with self.open("bar.txt", "w") as f:
+            with self.open("bar.txt", "w", encoding="utf8") as f:
                 f.write("b" * 110)
                 with self.raises_os_error(errno.ENOSPC):
                     f.flush()
-        with self.open("bar.txt") as f:
+        with self.open("bar.txt", encoding="utf8") as f:
             self.assertEqual("", f.read())
 
     def test_disk_full_append(self):
         file_path = "bar.txt"
-        with self.open(file_path, "w") as f:
+        with self.open(file_path, "w", encoding="utf8") as f:
             f.write("a" * 60)
-        with self.open(file_path) as f:
+        with self.open(file_path, encoding="utf8") as f:
             self.assertEqual("a" * 60, f.read())
         with self.raises_os_error(errno.ENOSPC):
-            with self.open(file_path, "a") as f:
+            with self.open(file_path, "a", encoding="utf8") as f:
                 f.write("b" * 41)
                 with self.raises_os_error(errno.ENOSPC):
                     f.flush()
-        with self.open("bar.txt") as f:
+        with self.open("bar.txt", encoding="utf8") as f:
             self.assertEqual(f.read(), "a" * 60)
 
     def test_disk_full_after_reopened_rplus_seek(self):
-        with self.open("bar.txt", "w") as f:
+        with self.open("bar.txt", "w", encoding="utf8") as f:
             f.write("a" * 60)
-        with self.open("bar.txt") as f:
+        with self.open("bar.txt", encoding="utf8") as f:
             self.assertEqual(f.read(), "a" * 60)
         with self.raises_os_error(errno.ENOSPC):
-            with self.open("bar.txt", "r+") as f:
+            with self.open("bar.txt", "r+", encoding="utf8") as f:
                 f.seek(50)
                 f.write("b" * 60)
                 with self.raises_os_error(errno.ENOSPC):
                     f.flush()
-        with self.open("bar.txt") as f:
+        with self.open("bar.txt", encoding="utf8") as f:
             self.assertEqual(f.read(), "a" * 60)
 
 
@@ -2046,10 +2048,90 @@ class RealFileSystemAccessTest(RealFsTestCase):
         with self.raises_os_error(errno.EEXIST):
             self.filesystem.add_real_file(real_file_path)
 
-    def test_existing_fake_directory_raises(self):
-        self.filesystem.create_dir(self.root_path)
-        with self.raises_os_error(errno.EEXIST):
-            self.filesystem.add_real_directory(self.root_path)
+    @contextlib.contextmanager
+    def create_real_paths(self):
+        real_dir_root = os.path.join(tempfile.gettempdir(), "root")
+        try:
+            for dir_name in ("foo", "bar"):
+                real_dir = os.path.join(real_dir_root, dir_name)
+                os.makedirs(real_dir, exist_ok=True)
+                with open(
+                    os.path.join(real_dir, "test.txt"), "w", encoding="utf8"
+                ) as f:
+                    f.write("test")
+                sub_dir = os.path.join(real_dir, "sub")
+                os.makedirs(sub_dir, exist_ok=True)
+                with open(os.path.join(sub_dir, "sub.txt"), "w", encoding="utf8") as f:
+                    f.write("sub")
+            yield real_dir_root
+        finally:
+            shutil.rmtree(real_dir_root, ignore_errors=True)
+
+    def test_existing_fake_directory_is_merged_lazily(self):
+        self.filesystem.create_file(os.path.join("/", "root", "foo", "test1.txt"))
+        self.filesystem.create_dir(os.path.join("root", "baz"))
+        with self.create_real_paths() as root_dir:
+            self.filesystem.add_real_directory(root_dir, target_path="/root")
+            self.assertTrue(
+                self.filesystem.exists(os.path.join("root", "foo", "test.txt"))
+            )
+            self.assertTrue(
+                self.filesystem.exists(os.path.join("root", "foo", "test1.txt"))
+            )
+            self.assertTrue(
+                self.filesystem.exists(os.path.join("root", "bar", "sub", "sub.txt"))
+            )
+            self.assertTrue(self.filesystem.exists(os.path.join("root", "baz")))
+
+    def test_existing_fake_directory_is_merged(self):
+        self.filesystem.create_file(os.path.join("/", "root", "foo", "test1.txt"))
+        self.filesystem.create_dir(os.path.join("root", "baz"))
+        with self.create_real_paths() as root_dir:
+            self.filesystem.add_real_directory(
+                root_dir, target_path="/root", lazy_read=False
+            )
+            self.assertTrue(
+                self.filesystem.exists(os.path.join("root", "foo", "test.txt"))
+            )
+            self.assertTrue(
+                self.filesystem.exists(os.path.join("root", "foo", "test1.txt"))
+            )
+            self.assertTrue(
+                self.filesystem.exists(os.path.join("root", "bar", "sub", "sub.txt"))
+            )
+            self.assertTrue(self.filesystem.exists(os.path.join("root", "baz")))
+
+    def test_fake_files_cannot_be_overwritten(self):
+        self.filesystem.create_file(os.path.join("/", "root", "foo", "test.txt"))
+        with self.create_real_paths() as root_dir:
+            with self.raises_os_error(errno.EEXIST):
+                self.filesystem.add_real_directory(root_dir, target_path="/root")
+
+    def test_cannot_overwrite_file_with_dir(self):
+        self.filesystem.create_file(os.path.join("/", "root", "foo"))
+        with self.create_real_paths() as root_dir:
+            with self.raises_os_error(errno.ENOTDIR):
+                self.filesystem.add_real_directory(root_dir, target_path="/root/")
+
+    def test_cannot_overwrite_symlink_with_dir(self):
+        self.filesystem.create_symlink(
+            os.path.join("/", "root", "foo"), os.path.join("/", "root", "link")
+        )
+        with self.create_real_paths() as root_dir:
+            with self.raises_os_error(errno.EEXIST):
+                self.filesystem.add_real_directory(root_dir, target_path="/root/")
+
+    def test_symlink_is_merged(self):
+        self.skip_if_symlink_not_supported(force_real_fs=True)
+        self.filesystem.create_dir(os.path.join("/", "root", "foo"))
+        with self.create_real_paths() as root_dir:
+            link_path = os.path.join(root_dir, "link.txt")
+            target_path = os.path.join("foo", "sub", "sub.txt")
+            os.symlink(target_path, link_path)
+            self.filesystem.add_real_directory(root_dir, target_path="/root")
+            fake_link_path = os.path.join("/", "root", "link.txt")
+            self.assertTrue(self.filesystem.exists(fake_link_path))
+            self.assertTrue(self.filesystem.islink(fake_link_path))
 
     def check_fake_file_stat(self, fake_file, real_file_path, target_path=None):
         if target_path is None or target_path == real_file_path:
@@ -2123,7 +2205,7 @@ class RealFileSystemAccessTest(RealFsTestCase):
         # regression test for #470
         real_file_path = os.path.abspath(__file__)
         self.filesystem.add_real_file(real_file_path, read_only=False)
-        with self.fake_open(real_file_path, "w") as f:
+        with self.fake_open(real_file_path, "w", encoding="utf8") as f:
             f.write("foo")
 
         with self.fake_open(real_file_path, "rb") as f:
@@ -2209,7 +2291,7 @@ class RealFileSystemAccessTest(RealFsTestCase):
 
         self.filesystem.create_file("/etc/something")
 
-        with fake_open("/etc/something", "w") as f:
+        with fake_open("/etc/something", "w", encoding="utf8") as f:
             f.write("good morning")
 
         try:
@@ -2305,7 +2387,8 @@ class RealFileSystemAccessTest(RealFsTestCase):
                     "pyfakefs",
                     "tests",
                     "fixtures/symlink_file_absolute_outside",
-                )
+                ),
+                encoding="utf8",
             ).read(),
             "good morning",
         )
@@ -2366,11 +2449,6 @@ class RealFileSystemAccessTest(RealFsTestCase):
                 self.filesystem.exists("/path/fixtures/symlink_file_relative")
             )
 
-    def test_add_existing_real_directory_tree_to_existing_path(self):
-        self.filesystem.create_dir("/foo/bar")
-        with self.raises_os_error(errno.EEXIST):
-            self.filesystem.add_real_directory(self.root_path, target_path="/foo/bar")
-
     def test_add_existing_real_directory_tree_to_other_path(self):
         self.filesystem.add_real_directory(self.root_path, target_path="/foo/bar")
         self.assertFalse(
@@ -2420,7 +2498,7 @@ class RealFileSystemAccessTest(RealFsTestCase):
         self.filesystem.set_disk_usage(disk_size, real_dir_path)
         self.filesystem.add_real_directory(real_dir_path)
 
-        # the directory contents have not been read, the the disk usage
+        # the directory contents have not been read, the disk usage
         # has not changed
         self.assertEqual(disk_size, self.filesystem.get_disk_usage(real_dir_path).free)
         # checking for existence shall read the directory contents
@@ -2510,14 +2588,14 @@ class FileSideEffectTests(TestCase):
     def test_side_effect_called(self):
         fake_open = fake_filesystem.FakeFileOpen(self.filesystem)
         self.side_effect_called = False
-        with fake_open("/a/b/file_one", "w") as handle:
+        with fake_open("/a/b/file_one", "w", encoding="utf8") as handle:
             handle.write("foo")
         self.assertTrue(self.side_effect_called)
 
     def test_side_effect_file_object(self):
         fake_open = fake_filesystem.FakeFileOpen(self.filesystem)
         self.side_effect_called = False
-        with fake_open("/a/b/file_one", "w") as handle:
+        with fake_open("/a/b/file_one", "w", encoding="utf8") as handle:
             handle.write("foo")
         self.assertEqual(self.side_effect_file_object_content, "foo")
 

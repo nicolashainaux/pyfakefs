@@ -9,24 +9,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
 
-"""
-Example module that is used for testing the functionality of
-:py:class`pyfakefs.mox_stubout.StubOutForTesting`.
-"""
-
-import datetime
-import math
-import os
+import pytest
 
 
-def check_if_exists(filepath):
-    return os.path.exists(filepath)
+@pytest.fixture
+def report_path():
+    yield Path(__file__).parent / "report.txt"
 
 
-def fabs(x):
-    return math.fabs(x)
+def test_1(fs):
+    pass
 
 
-def tomorrow():
-    return datetime.date.today() + datetime.timedelta(days=1)
+def test_2_report_in_real_fs(report_path):
+    print("test_2_report_in_real_fs")
+    assert report_path.exists()
+    report_path.unlink()
+
+
+def test_3(fs):
+    pass
+
+
+def test_4_report_in_real_fs(report_path):
+    assert report_path.exists()
+    report_path.unlink()

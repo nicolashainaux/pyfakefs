@@ -28,6 +28,7 @@ Note: as the implementation is based on FakeFilesystem, all faked classes
 (including PurePosixPath, PosixPath, PureWindowsPath and WindowsPath)
 get the properties of the underlying fake filesystem.
 """
+
 import errno
 import fnmatch
 import functools
@@ -43,7 +44,6 @@ from typing import Callable
 from urllib.parse import quote_from_bytes as urlquote_from_bytes
 
 from pyfakefs import fake_scandir
-from pyfakefs.extra_packages import use_scandir
 from pyfakefs.fake_filesystem import FakeFilesystem
 from pyfakefs.fake_open import FakeFileOpen
 from pyfakefs.fake_os import FakeOsModule, use_original_os
@@ -108,9 +108,7 @@ class _FakeAccessor(accessor):  # type: ignore[valid-type, misc]
     )
 
     listdir = _wrap_strfunc(FakeFilesystem.listdir)
-
-    if use_scandir:
-        scandir = _wrap_strfunc(fake_scandir.scandir)
+    scandir = _wrap_strfunc(fake_scandir.scandir)
 
     if hasattr(os, "lchmod"):
         lchmod = _wrap_strfunc(
@@ -748,7 +746,7 @@ class FakePath(pathlib.Path):
             else:
                 self.filesystem.raise_os_error(errno.EEXIST, self._path())
         else:
-            fake_file = self.open("w")
+            fake_file = self.open("w", encoding="utf8")
             fake_file.close()
             self.chmod(mode)
 
@@ -774,8 +772,6 @@ class FakePath(pathlib.Path):
 
 class FakePathlibModule:
     """Uses FakeFilesystem to provide a fake pathlib module replacement.
-    Can be used to replace both the standard `pathlib` module and the
-    `pathlib2` package available on PyPi.
 
     You need a fake_filesystem to use this:
     `filesystem = fake_filesystem.FakeFilesystem()`

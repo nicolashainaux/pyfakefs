@@ -17,6 +17,7 @@
 Note that almost all of the functionality is delegated to the real `shutil`
 and works correctly with the fake filesystem because of the faked `os` module.
 """
+
 import os
 import shutil
 import sys
@@ -137,7 +138,7 @@ class FakeShutilModuleTest(RealFsTestCase):
         self.create_file(os.path.join(dir_path, "bar"))
         file_path = os.path.join(dir_path, "baz")
         self.create_file(file_path)
-        with open(file_path):
+        with open(file_path, encoding="utf8"):
             shutil.rmtree(dir_path)
         self.assertFalse(os.path.exists(file_path))
 
@@ -148,7 +149,7 @@ class FakeShutilModuleTest(RealFsTestCase):
         self.create_file(os.path.join(dir_path, "bar"))
         file_path = os.path.join(dir_path, "baz")
         self.create_file(file_path)
-        with open(file_path):
+        with open(file_path, encoding="utf8"):
             with self.assertRaises(OSError):
                 shutil.rmtree(dir_path)
         self.assertTrue(os.path.exists(dir_path))
@@ -190,6 +191,15 @@ class FakeShutilModuleTest(RealFsTestCase):
         # not executed
         self.assertFalse(NonLocal.errorHandled)
         self.assertEqual(NonLocal.errorPath, "")
+
+    def test_rmtree_in_windows(self):
+        # regression test for #979
+        self.check_windows_only()
+        base_path = self.make_path("foo", "bar")
+        self.os.makedirs(self.os.path.join(base_path, "res"))
+        self.assertTrue(self.os.path.exists(base_path))
+        shutil.rmtree(base_path)
+        self.assertFalse(self.os.path.exists(base_path))
 
     def test_copy(self):
         src_file = self.make_path("xyzzy")
