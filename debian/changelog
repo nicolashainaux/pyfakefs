@@ -1,3 +1,10 @@
+python3-pyfakefs (5.4.1-0ubuntu1~jammy) jammy; urgency=low
+
+  See https://github.com/pytest-dev/pyfakefs/releases for details
+
+ -- Nicolas Hainaux <nh.techn@gmail.com>  Thu, 18 Apr 2024 22:31:10 +0200
+
+
 python3-pyfakefs (5.3.0-0ubuntu2~focal) focal; urgency=low
 
   * Changed handling of nested fixtures and bug fixes.
